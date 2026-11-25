@@ -1774,7 +1774,10 @@ function action(p,noFloor){
     }
     case 'trash':{
       if(!h) return null;
-      if(h.k==='plate'||h.k==='cup'){ const nm=h.k==='cup'?'유리컵':'접시'; if(h.dirty) return Wn(`더러운 ${nm}은 설거지해요`); return h.food.length?A(`${nm} 비우기`,()=>{h.food=[];}):Wn(`빈 ${nm}이에요`); }
+      if(h.k==='plate'||h.k==='cup'){ const nm=h.k==='cup'?'유리컵':'접시'; if(h.dirty) return Wn(`더러운 ${nm}은 설거지해요`);
+        // 음식은 버리고 그릇은 그릇 자리(접시 선반·컵 선반)로 돌아가요
+        if(binDish(h,true)) return A(h.food.length?`버리고 ${nm} 돌려놓기`:`${nm} 돌려놓기`,()=>{ binDish(h); p.hold=null; });
+        return h.food.length?A(`${nm} 비우기`,()=>{h.food=[];}):Wn(`빈 ${nm}이에요`); }
       return A(`${label(h)} 버리기`,()=>{p.hold=null;});
     }
     default:{ // counter, board
@@ -2065,10 +2068,17 @@ function nearFloor(p){
   const qx=p.x+p.fx*.42, qz=p.z+p.fz*.42; let best=null, bd=.62;
   floorItems.forEach(f=>{ const d=Math.hypot(f.x-qx,f.z-qz); if(d<bd){ bd=d; best=f; } }); return best;
 }
+// 쓰레기통에 넣은 깨끗한 그릇: 음식은 버리고 그릇 자리로 돌려보내요 (check=true면 가능한지만 봐요)
+function binDish(it,check){
+  if(!it||it.dirty||(it.k!=='plate'&&it.k!=='cup')) return false;
+  const home=it.k==='cup'?S.cup:S.rack; if(!home) return false;
+  if(!check){ home.count+=Math.max(1,it.n|0); sfx('place'); }
+  return true;
+}
 // 날아온 재료가 기구에 들어갈 수 있으면 넣어요
 function landOn(s,it){
   if(!s) return false;
-  if(s.type==='trash') return it.k!=='plate'&&it.k!=='cup';
+  if(s.type==='trash') return it.k==='plate'||it.k==='cup'?binDish(it):true;
   if(s.type==='blender'){ if(s.blT>=BLEND) return false; if(it.k==='milk'&&!s.bl.includes('milk')){ s.bl.push('milk'); return true; }
     if(['strawberry','banana','choco'].includes(it.k)&&it.cut&&!s.bl.includes(it.k)&&s.bl.filter(k=>k!=='milk').length<2){ s.bl.push(it.k); return true; } return false; }
   if(s.type==='cuprack'){ if(it.k==='cup'&&!it.dirty&&!it.food.length){ s.count+=it.n||1; return true; } return false; }
