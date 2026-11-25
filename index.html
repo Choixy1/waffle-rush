@@ -376,7 +376,7 @@ kbd{font-family:var(--font)!important;font-weight:900;letter-spacing:.5px}
     <input id="edName" maxlength="20" placeholder="맵 이름" aria-label="맵 이름" autocomplete="off">
     <button class="mini go" id="edTest">테스트 플레이</button>
     <button class="mini" id="edSave">내 맵에 저장</button>
-    <button class="mini" id="edUpload">올리기</button>
+    <button class="mini go" id="edUpload">모두에게 올리기</button>
     <span class="sp"></span>
     <button class="mini" id="edUndo">되돌리기</button>
     <button class="mini" id="edClear">비우기</button>
@@ -2745,8 +2745,26 @@ const lsSet=list=>{ try{ let keep=[]; try{ const v=JSON.parse(localStorage.getIt
   localStorage.setItem(LS_KEY,JSON.stringify(list.slice(0,200).concat(keep))); return true; }catch(e){ return false; } };
 
 const MAPS={
-  db:null, user:null, uid:null, all:[], tab:'mine', unsub:null, loaded:false,
+  db:null, user:null, uid:null, all:[], tab:'mine', unsub:null, loaded:false, sb:null, sbAt:0,
+  shared(){ return !!(this.db&&this.uid||this.sb); },
+  // 사이트: 공용 맵 저장소(Supabase). 이 브라우저만 아는 비밀값으로 내가 올린 맵만 고치거나 내릴 수 있어요
+  secret(){ try{ let k=localStorage.getItem('waffle-rush-secret-v1'); if(!k||k.length<16){ k=Array.from(crypto.getRandomValues(new Uint8Array(18)),b=>b.toString(16).padStart(2,'0')).join(''); localStorage.setItem('waffle-rush-secret-v1',k); } return k; }catch(e){ return null; } },
+  upIds(){ try{ const v=JSON.parse(localStorage.getItem('waffle-rush-up-v1')||'[]'); return Array.isArray(v)?v.map(String):[]; }catch(e){ return []; } },
+  setUp(id,on){ try{ const v=this.upIds().filter(x=>x!==id); if(on) v.unshift(id); localStorage.setItem('waffle-rush-up-v1',JSON.stringify(v.slice(0,300))); }catch(e){} },
+  async sbCall(path,body){ const c=this.sb, h={apikey:c.key,Authorization:'Bearer '+c.key};
+    if(body) h['Content-Type']='application/json';
+    const r=await fetch(c.url+path,body?{method:'POST',headers:h,body:JSON.stringify(body)}:{headers:h});
+    if(!r.ok){ let m=''; try{ m=(await r.json()).message||''; }catch(e){} throw {sb:m||String(r.status)}; }
+    const t=await r.text(); return t?JSON.parse(t):null; },
+  async sbLoad(force){
+    if(!this.sb||(!force&&Date.now()-this.sbAt<15000)) return; this.sbAt=Date.now();
+    try{ const rows=await this.sbCall('/rest/v1/maps?select=id,name,grid,updated_at&order=updated_at.desc&limit=100'); const mine=this.upIds();
+      this.all=(Array.isArray(rows)?rows:[]).filter(m=>m&&validGridStr(m.grid)&&checkMap(m.grid).valid).map(m=>({id:String(m.id).slice(0,40),name:cleanName(m.name)||'이름 없는 맵',grid:m.grid,at:Date.parse(m.updated_at)||0,by:mine.includes(String(m.id))?'me':''}));
+      this.err=false; }
+    catch(e){ this.err=true; this.sbAt=0; }
+    this.loaded=true; if(!$('mapScr').hidden) this.render(); },
   async init(){
+    try{ const w=window.WAFFLE_SHARED; if(!window.claude&&w&&/^https:\/\/[\w.-]+$/.test(w.url||'')&&w.key){ this.sb={url:w.url,key:String(w.key)}; this.uid='me'; } }catch(e){}
     try{ const c=window.claude; if(!c||typeof c.use!=='function') return;
       const db=await c.use('db'); if(!db) return; this.db=db;
       this.user=await c.use('user'); try{ this.uid=this.user?await this.user.id():null; }catch(e){}
@@ -2760,15 +2778,16 @@ const MAPS={
   showCur(){ $('curMapName').textContent=curMap.name+(MAP_DUO?` (${MAP_NEED}인용)`:''); },
   select(m){ curMap={id:m.id,name:m.name,grid:m.grid}; buildKitchen(m.grid,true); this.showCur();
     if(NET.mode==='host'&&NET.room){ NET.room.presence({mp:curMap.grid,mn:curMap.name.slice(0,20)}).catch(()=>{}); NET.assign(); NET.renderWait(); } },   // 방장이 방을 연 뒤에 맵을 바꿔도 친구들에게 전해요
-  open(){ show('mapScr'); this.render(); },
+  open(){ show('mapScr'); this.render(); if(this.tab==='all') this.sbLoad(); },
   render(){
+    if(this.tab==='all'&&this.sb&&!this.loaded) this.sbLoad();
     document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.tab===this.tab));
     const list=$('mapList'); list.textContent=''; const note=$('mapNote');
     let maps;
     if(this.tab==='mine'){ maps=[{id:'default',name:'기본 주방',grid:DEFAULT_GRID,builtin:true},...lsGet().map(m=>Object.assign(m,{mine:true}))];
       note.textContent='내 맵은 이 브라우저에만 저장돼요 (Claude 링크와 사이트는 따로예요). 옮기려면 "내 맵 전부 복사" 후 다른 쪽에서 "코드로 불러오기"를 눌러요.'; }
     else { maps=this.all;
-      note.textContent=!this.db?(window.claude?'모두의 맵은 claude.ai에 로그인한 상태로 이 게임을 열면 볼 수 있어요.':'모두의 맵은 Claude 링크에서만 볼 수 있어요. 여기서는 "코드 복사"와 "코드로 불러오기"로 맵을 주고받아요.'):!this.loaded?'불러오는 중...':maps.length?'다른 사람이 올린 맵이에요. 골라서 플레이하거나 복사해서 고칠 수 있어요.':'아직 올라온 맵이 없어요. 첫 번째로 올려보세요!'; }
+      note.textContent=this.sb?(!this.loaded?'불러오는 중...':this.err?'모두의 맵을 불러오지 못했어요. 잠시 뒤에 다시 열어 주세요.':maps.length?'다른 사람이 올린 맵이에요. 골라서 플레이하거나 복사해서 고칠 수 있어요.':'아직 올라온 맵이 없어요. 내 맵에서 "모두에게 올리기"를 눌러 첫 번째로 올려보세요!'):!this.db?(window.claude?'모두의 맵은 claude.ai에 로그인한 상태로 이 게임을 열면 볼 수 있어요.':'모두의 맵은 아직 준비 중이에요. 그동안은 "코드 복사"와 "코드로 불러오기"로 맵을 주고받아요.'):!this.loaded?'불러오는 중...':maps.length?'다른 사람이 올린 맵이에요. 골라서 플레이하거나 복사해서 고칠 수 있어요.':'아직 올라온 맵이 없어요. 첫 번째로 올려보세요!'; }
     maps.forEach(m=>{
       const c=document.createElement('div'); c.className='mcard'+(m.grid===curMap.grid&&m.id===curMap.id?' cur':'');
       const cv=document.createElement('canvas'); drawThumb(cv,m.grid);
@@ -2782,12 +2801,22 @@ const MAPS={
       btn('이 맵으로','go',()=>{ if(!v.valid){ toast('아직 완성되지 않은 맵이에요',true); return; } this.select(m); show('titleScr'); toast(`'${m.name}' 맵을 골랐어요`); },!v.valid);
       btn('코드 복사','',()=>copyMapCode(m.grid));
       btn(m.mine?'편집':'복사해서 편집','',()=>ED.open(m.mine?m:{id:newId(),name:cleanName((m.builtin?'':m.name)+' 복사').trim()||'새 맵',grid:m.grid}));
+      if(m.mine&&this.shared()&&v.valid) btn(m.up?'다시 올리기':'모두에게 올리기','go',async ev=>{ const b=ev.currentTarget; b.disabled=true; await this.upload(m); this.render(); });
       if(m.mine) btn('삭제','del',()=>{ lsSet(lsGet().filter(x=>x.id!==m.id)); this.render(); });
       if(this.tab==='all'&&m.by===this.uid) btn('내리기','del',()=>this.unpublish(m.id));
       c.append(cv,t,a,row); list.appendChild(c);
     });
   },
+  async upload(m){
+    if(!checkMap(m.grid).valid){ toast('맵을 먼저 완성해 주세요',true); return false; }
+    if(!this.shared()){ toast(window.claude?'올리기는 claude.ai에 로그인한 상태에서만 돼요':'모두의 맵이 아직 준비 중이에요',true); return false; }
+    try{ await this.publish(m); const list=lsGet(); list.forEach(x=>{ if(x.id===m.id) x.up=true; }); lsSet(list); toast(`'${m.name}'을(를) 모두의 맵에 올렸어요!`); return true; }
+    catch(e){ const c=e&&e.sb||'';
+      toast(typeof e==='string'?e:/busy/.test(c)?'지금 올리는 사람이 많아요. 1분 뒤에 다시 해 주세요':/not owner/.test(c)?'다른 사람이 올린 맵과 겹쳐요. "복사해서 편집"으로 새로 만들어 올려 주세요':(e&&e.code==='invalid_argument'||e&&e.code==='not_permitted')?'이 계정은 올릴 권한이 없어요':'올리지 못했어요. 잠시 뒤에 다시 해 주세요',true); return false; }
+  },
   async publish(m){
+    if(this.sb){ const k=this.secret(); if(!k) throw '이 브라우저에서는 올릴 수 없어요 (저장소가 막혀 있어요).';
+      await this.sbCall('/rest/v1/rpc/publish_map',{p_id:String(m.id).slice(0,40),p_secret:k,p_name:cleanName(m.name)||'이름 없는 맵',p_grid:m.grid}); this.setUp(String(m.id),true); this.sbLoad(true); return; }
     if(!this.db||!this.uid) throw '올리기는 claude.ai에 로그인한 상태에서만 할 수 있어요.';
     const ref=this.db.doc('maps/'+this.uid); const snap=await ref.get(); const cur=snap.exists&&Array.isArray(snap.data().maps)?snap.data().maps.slice():[];
     const i=cur.findIndex(x=>x&&x.id===m.id); const e={id:m.id,name:m.name,grid:m.grid,at:Date.now()};
@@ -2795,6 +2824,8 @@ const MAPS={
     await ref.set({maps:cur});
   },
   async unpublish(id){
+    if(this.sb){ try{ await this.sbCall('/rest/v1/rpc/unpublish_map',{p_id:id,p_secret:this.secret()}); this.setUp(id,false); const ls=lsGet(); ls.forEach(x=>{ if(x.id===id) x.up=false; }); lsSet(ls); toast('맵을 내렸어요'); this.sbLoad(true); }
+      catch(e){ toast('내리지 못했어요. 잠시 뒤에 다시 해 주세요',true); } return; }
     if(!this.db||!this.uid) return;
     try{ const ref=this.db.doc('maps/'+this.uid); const snap=await ref.get(); const cur=snap.exists&&Array.isArray(snap.data().maps)?snap.data().maps.filter(x=>x&&x.id!==id):[];
       await ref.set({maps:cur}); const ls=lsGet(); ls.forEach(x=>{ if(x.id===id) x.up=false; }); lsSet(ls); toast('맵을 내렸어요'); }
@@ -2964,12 +2995,9 @@ const ED={
   save(){ const list=lsGet(); const m={id:this.map.id,name:this.name(),grid:this.grid,at:Date.now(),up:false}; const i=list.findIndex(x=>x.id===m.id); if(i>=0){ m.up=list[i].up; list[i]=m; } else list.unshift(m);
     this.map.name=m.name; this.dirty=false; if(lsSet(list)) toast('내 맵에 저장했어요'); else toast('이 브라우저에서는 저장할 수 없어요',true); return m; },
   async upload(){
-    const v=checkMap(this.grid); if(!v.valid){ toast('맵을 먼저 완성해 주세요',true); return; }
-    if(!MAPS.db){ toast('올리기는 claude.ai에 로그인한 상태에서만 돼요',true); return; }
+    if(!checkMap(this.grid).valid){ toast('맵을 먼저 완성해 주세요',true); return; }
     const m=this.save(); $('edUpload').disabled=true;
-    try{ await MAPS.publish(m); const list=lsGet(); list.forEach(x=>{ if(x.id===m.id) x.up=true; }); lsSet(list); toast('모두의 맵에 올렸어요!'); }
-    catch(e){ toast(typeof e==='string'?e:(e&&e.code==='invalid_argument'||e&&e.code==='not_permitted')?'이 계정은 올릴 권한이 없어요':'올리지 못했어요. 잠시 뒤에 다시 해 주세요',true); }
-    $('edUpload').disabled=false;
+    await MAPS.upload(m); $('edUpload').disabled=false;
   },
   test(){
     const v=checkMap(this.grid); if(!v.valid){ toast('빨간 항목을 먼저 채워 주세요',true); return; }
@@ -3004,7 +3032,7 @@ $('mapCodeBtn').onclick=()=>importMapCode(); $('mapAllBtn').onclick=()=>copyAllM
 $('mapCodeIn').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); importMapCode(); } }); $('mapBack').onclick=()=>show('titleScr');
 $('makeBtn').onclick=()=>ED.open({id:newId(),name:'새 맵',grid:BLANK_GRID});
 $('newMapBtn').onclick=()=>ED.open({id:newId(),name:'새 맵',grid:BLANK_GRID});
-document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{ MAPS.tab=b.dataset.tab; MAPS.render(); });
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{ MAPS.tab=b.dataset.tab; MAPS.render(); if(MAPS.tab==='all') MAPS.sbLoad(); });
 MAPS.init();
 
 })();
