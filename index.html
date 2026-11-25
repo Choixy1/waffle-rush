@@ -357,6 +357,7 @@ kbd{font-family:var(--font)!important;font-weight:900;letter-spacing:.5px}
       <div class="codebig" id="codeShow"></div>
       <div class="who" id="whoList"></div>
       <p class="sub" style="text-align:center;margin:0" id="waitMsg"></p>
+      <button class="btn sm alt" id="coopMap" hidden>맵 고르기</button>
       <button class="btn" id="coopStart" hidden>영업 시작 (Enter)</button>
     </div>
     <p class="note" id="coopErr" style="color:var(--red)"></p>
@@ -2673,7 +2674,10 @@ const NET={
     const ok=n>=2&&n>=MAP_NEED&&(!host||MAP_CTRL.every(i=>this.slotOn(i)));
     $('coopStart').hidden=!(host&&ok);
     $('waitMsg').textContent=host?(n<2?'친구에게 이 게임 링크와 방 코드를 알려주세요. 4명까지 들어올 수 있어요.':n<MAP_NEED?`이 맵은 ${MAP_NEED}명이 필요해요. 친구를 조금 더 기다려요. (지금 ${n}명)`:`${n}명이 모였어요! 영업을 시작해 볼까요?`+(n<4?' 더 기다려도 돼요.':'')):'방장이 영업을 시작하면 바로 같이 시작돼요.';
-    $('codeLbl').textContent=(host?'방 코드 (친구에게 알려주세요)':'들어온 방')+' · 맵: '+curMap.name;
+    $('codeLbl').textContent=(host?'방 코드 (친구에게 알려주세요)':'들어온 방')+' · 맵: '+curMap.name+(MAP_DUO?` (${MAP_NEED}인용)`:'');
+    // 방장은 모인 인원을 보고 전체 맵(기본·내 맵·모두의 맵) 중에서 골라요
+    $('coopMap').hidden=!host||state==='play'||state==='paused'; $('coopMap').textContent=`맵 고르기 (지금: ${curMap.name})`;
+    if(MAPS.pick&&!$('mapScr').hidden) MAPS.render();   // 맵 고르는 중에 인원이 바뀌면 다시 그려요
   },
   async host(){
     if(!this.api||this.room) return; this.busy(true); $('coopErr').textContent='';
@@ -2776,7 +2780,7 @@ const NET={
       if(!h){ this.hostGone+=dt; if(this.hostGone>5){ this.leave('방장이 나갔거나 연결이 끊겼어요.'); return; } }
       else { this.hostGone=0;
         if(state!=='play'&&state!=='paused'){ const k=this.hostSlots().indexOf(this.myId); if(k>=0&&k+1!==me){ me=k+1; players.forEach((p,i)=>p.active=i===0||i===me); this.renderWait(); } }
-        const mp=h.presence.mp; if(validGridStr(mp)&&mp!==curMap.grid){ curMap={id:'remote',name:typeof h.presence.mn==='string'?h.presence.mn.slice(0,20):'방장의 맵',grid:mp}; buildKitchen(mp,true); MAPS.showCur(); this.renderWait(); }
+        const mp=h.presence.mp, mn=typeof h.presence.mn==='string'?cleanName(h.presence.mn)||'방장의 맵':'방장의 맵'; if(validGridStr(mp)&&mp!==curMap.grid){ curMap={id:'remote',name:mn,grid:mp}; buildKitchen(mp,true); MAPS.showCur(); this.renderWait(); } else if(validGridStr(mp)&&mn!==curMap.name){ curMap={id:curMap.id,name:mn,grid:curMap.grid}; MAPS.showCur(); this.renderWait(); }
         const g=h.presence.g; if(g&&g!==this.lastG){ this.lastG=g; applySnap(g); } }
       if(state==='play') players.forEach((p,i)=>{ if(i!==me&&p.active) followRemote(p,dt); });
       this.sendT-=dt;
@@ -2898,7 +2902,9 @@ const MAPS={
   showCur(){ $('curMapName').textContent=curMap.name+(MAP_DUO?` (${MAP_NEED}인용)`:''); },
   select(m){ curMap={id:m.id,name:m.name,grid:m.grid}; buildKitchen(m.grid,true); this.showCur();
     if(NET.mode==='host'&&NET.room){ NET.room.presence({mp:curMap.grid,mn:curMap.name.slice(0,20)}).catch(()=>{}); NET.assign(); NET.renderWait(); } },   // 방장이 방을 연 뒤에 맵을 바꿔도 친구들에게 전해요
-  open(){ show('mapScr'); this.render(); if(this.tab==='all') this.sbLoad(); },
+  pick:false,
+  open(pick){ this.pick=!!pick; show('mapScr'); this.render(); if(this.tab==='all') this.sbLoad(); },
+  back(){ if(this.pick&&NET.room){ this.pick=false; show('coopScr'); NET.renderWait(); } else { this.pick=false; show('titleScr'); } },
   render(){
     if(this.tab==='all'&&this.sb&&!this.loaded) this.sbLoad();
     document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.tab===this.tab));
@@ -2908,6 +2914,7 @@ const MAPS={
       note.textContent='내 맵은 이 브라우저에만 저장돼요 (Claude 링크와 사이트는 따로예요). 옮기려면 "내 맵 전부 복사" 후 다른 쪽에서 "코드로 불러오기"를 눌러요.'; }
     else { maps=this.all;
       note.textContent=this.sb?(!this.loaded?'불러오는 중...':this.err?'모두의 맵을 불러오지 못했어요. 잠시 뒤에 다시 열어 주세요.':maps.length?'다른 사람이 올린 맵이에요. 골라서 플레이하거나 복사해서 고칠 수 있어요.':'아직 올라온 맵이 없어요. 내 맵에서 "모두에게 올리기"를 눌러 첫 번째로 올려보세요!'):!this.db?(window.claude?'모두의 맵은 claude.ai에 로그인한 상태로 이 게임을 열면 볼 수 있어요.':'모두의 맵은 아직 준비 중이에요. 그동안은 "코드 복사"와 "코드로 불러오기"로 맵을 주고받아요.'):!this.loaded?'불러오는 중...':maps.length?'다른 사람이 올린 맵이에요. 골라서 플레이하거나 복사해서 고칠 수 있어요.':'아직 올라온 맵이 없어요. 첫 번째로 올려보세요!'; }
+    if(this.pick&&NET.room) note.textContent=`지금 ${NET.count()}명이 모였어요. 같이 할 맵을 골라요.`+(this.tab==='all'?' (모두의 맵)':'');
     maps.forEach(m=>{
       const c=document.createElement('div'); c.className='mcard'+(m.grid===curMap.grid&&m.id===curMap.id?' cur':'');
       const cv=document.createElement('canvas'); drawThumb(cv,m.grid);
@@ -2918,11 +2925,12 @@ const MAPS={
         else if(m.by&&this.user&&this.user.profiles) this.user.profiles([m.by]).then(ps=>{ const n=ps&&ps[m.by]&&ps[m.by].name; if(n) a.textContent=`${n} · ${sz} · 메뉴 ${v.recipes.length}개`+(v.duo?` · ${v.need}인용`:''); }).catch(()=>{}); }
       const row=document.createElement('div'); row.className='row';
       const btn=(label,cls,fn,dis)=>{ const b=document.createElement('button'); b.className='mini '+cls; b.textContent=label; b.onclick=fn; if(dis) b.disabled=true; row.appendChild(b); };
-      btn('이 맵으로','go',()=>{ if(!v.valid){ toast('아직 완성되지 않은 맵이에요',true); return; } this.select(m); show('titleScr'); toast(`'${m.name}' 맵을 골랐어요`); },!v.valid);
+      const crew=this.pick&&NET.room?NET.count():0, tooMany=crew&&v.duo&&v.need>crew;
+      btn(tooMany?`${v.need}명 필요`:'이 맵으로','go',()=>{ if(!v.valid){ toast('아직 완성되지 않은 맵이에요',true); return; } this.select(m); toast(`'${m.name}' 맵을 골랐어요`); this.back(); },!v.valid||tooMany);
       btn('코드 복사','',()=>copyMapCode(m.grid));
-      btn(m.mine?'편집':'복사해서 편집','',()=>ED.open(m.mine?m:{id:newId(),name:cleanName((m.builtin?'':m.name)+' 복사').trim()||'새 맵',grid:m.grid}));
-      if(m.mine&&this.shared()&&v.valid) btn(m.up?'다시 올리기':'모두에게 올리기','go',async ev=>{ const b=ev.currentTarget; b.disabled=true; await this.upload(m); this.render(); });
-      if(m.mine) btn('삭제','del',()=>{ lsSet(lsGet().filter(x=>x.id!==m.id)); this.render(); });
+      if(!this.pick) btn(m.mine?'편집':'복사해서 편집','',()=>ED.open(m.mine?m:{id:newId(),name:cleanName((m.builtin?'':m.name)+' 복사').trim()||'새 맵',grid:m.grid}));
+      if(!this.pick&&m.mine&&this.shared()&&v.valid) btn(m.up?'다시 올리기':'모두에게 올리기','go',async ev=>{ const b=ev.currentTarget; b.disabled=true; await this.upload(m); this.render(); });
+      if(!this.pick&&m.mine) btn('삭제','del',()=>{ lsSet(lsGet().filter(x=>x.id!==m.id)); this.render(); });
       if(this.tab==='all'&&m.by===this.uid) btn('내리기','del',()=>this.unpublish(m.id));
       c.append(cv,t,a,row); list.appendChild(c);
     });
@@ -3147,9 +3155,9 @@ $('edUndo').onclick=()=>ED.doUndo(); $('edExit').onclick=()=>ED.exit();
 $('edClear').onclick=()=>{ ED.undo.push(ED.grid); const d=gDim(ED.grid)||{w:13,h:9}; ED.grid=blankGrid(d.w,d.h); ED.swRule=-1; ED.swPick=null; buildKitchen(ED.grid,false); ED.check(); ED.autosave(); ED.renderProp(); };
 $('edName').addEventListener('input',()=>{ ED.dirty=true; ED.autosave(); });
 $('testBack').onclick=()=>ED.back(); $('editBackBtn').onclick=()=>ED.back();
-$('mapBtn').onclick=()=>MAPS.open();
+$('mapBtn').onclick=()=>MAPS.open(); $('coopMap').onclick=()=>{ if(NET.mode==='host') MAPS.open(true); };
 $('mapCodeBtn').onclick=()=>importMapCode(); $('mapAllBtn').onclick=()=>copyAllMaps();
-$('mapCodeIn').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); importMapCode(); } }); $('mapBack').onclick=()=>show('titleScr');
+$('mapCodeIn').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); importMapCode(); } }); $('mapBack').onclick=()=>MAPS.back();
 $('makeBtn').onclick=()=>ED.open({id:newId(),name:'새 맵',grid:BLANK_GRID});
 $('newMapBtn').onclick=()=>ED.open({id:newId(),name:'새 맵',grid:BLANK_GRID});
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{ MAPS.tab=b.dataset.tab; MAPS.render(); if(MAPS.tab==='all') MAPS.sbLoad(); });
