@@ -1662,8 +1662,8 @@ const cookT=m=>m.cook.t+(m.cook.choco?CHOCO_FAST:0);   // 초코 반죽은 5초 
 function machineState(m){ if(!m.cook) return ''; const t=cookT(m); return t<COOK?'cooking':t<WARN?'done':t<BURN?'warn':'burnt'; }
 function matchOrder(food){ const key=[...food].sort().join(); return orders.findIndex(o=>[...o.r.food].sort().join()===key); }
 
-function action(p){
-  if(!p.hold){ const fi=nearFloor(p); if(fi) return Object.assign(A(`${label(fi.it)} 줍기`,()=>{ const i=floorItems.indexOf(fi); if(i<0) return; floorItems.splice(i,1); p.hold=fi.it; },'pick'),{fl:fi.id}); }
+function action(p,noFloor){
+  if(!p.hold&&!noFloor){ const fi=nearFloor(p); if(fi) return Object.assign(A(`${label(fi.it)} 줍기`,()=>{ const i=floorItems.indexOf(fi); if(i<0) return; floorItems.splice(i,1); p.hold=fi.it; },'pick'),{fl:fi.id}); }
   const s=p.target; if(!s) return null; const h=p.hold;
   switch(s.type){
     case 'crate':{
@@ -1776,7 +1776,7 @@ function interact(){
 // 친구(2P)가 누른 E를 방장 쪽에서 처리해요
 function remoteAct(p,idx){
   const st=stations[idx]; if(!st||Math.hypot(st.x-p.tx,st.y-p.tz)>1.8) return;
-  const keep=p.target; p.target=st; const a=action(p);
+  const keep=p.target; p.target=st; const a=action(p,true);   // 친구가 누른 건 기구라서 바닥 줍기로 바뀌지 않게
   if(a&&!a.warn){ a.fn(); if(SFX[a.snd]) SFX[a.snd](); }
   p.target=keep;
 }
@@ -2000,7 +2000,7 @@ function updSwaps(dt){ SW.rules.forEach((r,i)=>{ if(!r.ok) return; r.acc+=dt; if
 function syncSwaps(arr){
   if(!Array.isArray(arr)) return;
   if(SW.rules.some((r,i)=>r.n>((arr[i]&&arr[i][0])|0))) resetSwaps();
-  SW.rules.forEach((r,i)=>{ const a=arr[i]; if(!Array.isArray(a)) return; let guard=0; while(r.n<(a[0]|0)&&guard++<50) doSwap(i); r.acc=+a[1]||0; });
+  SW.rules.forEach((r,i)=>{ const a=arr[i]; if(!Array.isArray(a)) return; const goal=a[0]|0; let guard=0; while(r.n<goal&&guard++<200) doSwap(i,r.n===goal-1); r.acc=+a[1]||0; });
 }
 function renderSwaps(t,dt){
   stations.forEach(s=>{ const a=s.swapA; if(!a) return; a.t=Math.min(1,a.t+dt/.7); const k=a.t<.5?2*a.t*a.t:1-Math.pow(-2*a.t+2,2)/2;
@@ -2323,6 +2323,7 @@ function cleanItem(it){
   if(CHOPPABLE.includes(it.k)){ o.cut=!!it.cut; o.prog=o.prog||0; }
   return o;
 }
+const U8=new TextEncoder(), u8len=t=>U8.encode(t).length;
 function snap(cap){
   const P=players[0], st=[];
   stations.forEach((s,i)=>{ if(s.type==='crate'||s.type==='trash') return; const d={};
@@ -2336,10 +2337,12 @@ function snap(cap){
     o:orders.map(o=>[RECIPES.indexOf(o.r),o.t,o.max,o.id]),s:sendS?st:undefined,h:players.map(p=>p.hold),
     ps:players.map(p=>[p.x,p.z,p.fx,p.fz,p.anim]),ac:players.map(p=>p.active?1:0),ev:evs,ak:NET.lastSeq.slice(1),sw:SW.rules.map(r=>[r.n,r.acc]),
     fl:floorItems.map(f=>[f.id,f.x,f.z,f.it]),fy:flyers.map(f=>[f.id,f.x,f.z,f.y,f.vx,f.vz,f.vy,f.it])};
-  let txt=JSON.stringify(g,(k,v)=>typeof v==='number'?r2(v):v);
-  cap=cap||3800;
-  if(txt.length>cap){ g.ev=evs.slice(-4); txt=JSON.stringify(g,(k,v)=>typeof v==='number'?r2(v):v); }
-  if(txt.length>cap){ g.ev=evs.slice(-1); g.fy=[]; g.fl=g.fl.slice(0,8); txt=JSON.stringify(g,(k,v)=>typeof v==='number'?r2(v):v); }
+  const J=()=>JSON.stringify(g,(k,v)=>typeof v==='number'?r2(v):v);
+  let txt=J(); cap=cap||3800;
+  // 크기는 글자 수가 아니라 실제 바이트로 재요 (한글은 3바이트)
+  if(u8len(txt)>cap){ g.ev=evs.slice(-4); txt=J(); }
+  if(u8len(txt)>cap&&g.s){ g.s=undefined; NET.lastS=''; txt=J(); }   // 기구 목록은 다음 번에 보내요
+  if(u8len(txt)>cap){ g.ev=evs.slice(-1); g.fy=[]; g.fl=g.fl.slice(0,8); txt=J(); }
   return JSON.parse(txt);
 }
 function applySnap(g){
@@ -2472,15 +2475,19 @@ const NET={
   guests(){ if(!this.room) return []; try{ return this.room.peers().filter(p=>!p.sameTab&&p.presence&&p.presence.role==='guest'); }catch(e){ return []; } },
   // 방장: 들어온 친구에게 2P·3P·4P 자리를 정해 줘요 (나간 자리는 비워요)
   assign(){ if(this.mode!=='host'||!this.room) return; const ids=this.guests().map(p=>p.peer);
-    for(let k=0;k<3;k++) if(this.slots[k]&&!ids.includes(this.slots[k])) this.slots[k]=null;
-    ids.forEach(id=>{ if(this.slots.includes(id)) return; const k=this.slots.indexOf(null); if(k>=0) this.slots[k]=id; });
+    for(let k=0;k<3;k++) if(this.slots[k]&&!ids.includes(this.slots[k])){ this.slots[k]=null; this.slotSeen[k]=null; this.lastSeq[k+1]=0; }
+    // 나뉜 공간 맵이면 그 공간의 시작 자리(MAP_CTRL)부터 채워요
+    const order=[...new Set([...MAP_CTRL.filter(i=>i>0),1,2,3])];
+    ids.forEach(id=>{ if(this.slots.includes(id)) return; const i=order.find(i=>!this.slots[i-1]); if(i) this.slots[i-1]=id; });
+    // 게임 전이라면, 꼭 필요한 자리가 비었는데 다른 자리에 친구가 있으면 옮겨요
+    if(state!=='play'&&state!=='paused') MAP_CTRL.forEach(i=>{ if(i===0||this.slots[i-1]) return; const k=this.slots.findIndex((x,j)=>x&&!MAP_CTRL.includes(j+1)); if(k>=0){ this.slots[i-1]=this.slots[k]; this.slots[k]=null; this.slotSeen[k]=null; this.lastSeq[k+1]=0; } });
     const key=this.slots.join(','); if(key!==this.slotKey){ this.slotKey=key; this.room.presence({sl:this.slots.map(x=>x||'')}).catch(()=>{}); } },
   // 친구 화면: 방장이 정해 준 자리
   hostSlots(){ const h=this.findPeer('host'); const sl=h&&Array.isArray(h.presence.sl)?h.presence.sl:[]; return [0,1,2].map(k=>typeof sl[k]==='string'&&sl[k]?sl[k]:null); },
   count(){ return 1+(this.mode==='host'?this.slots:this.hostSlots()).filter(Boolean).length; },
   slotOn(i){ if(i===0) return true; if(this.mode==='host') return !!this.slots[i-1]; return this.mode==='guest'&&i===me; },
   guestHere(){ this.assign(); return this.slots.some(Boolean); },
-  canStart(){ return this.guestHere()&&this.count()>=MAP_NEED; },
+  canStart(){ return this.guestHere()&&this.count()>=MAP_NEED&&MAP_CTRL.every(i=>this.slotOn(i)); },
   async init(){
     try{
       const c=window.claude;
@@ -2531,7 +2538,7 @@ const NET={
     [0,1,2,3].forEach(i=>{ const on=i===0?hostP:!!sl[i-1], mine=i===me;
       const s=document.createElement('span'); if(!on) s.className='off'; const ic=document.createElement('i'); ic.style.background=PCOL[i];
       s.append(ic,`${i+1}P ${i?'친구':'방장'}`+(mine?' (나)':on?'':' 빈 자리')); w.appendChild(s); });
-    const ok=n>=2&&n>=MAP_NEED;
+    const ok=n>=2&&n>=MAP_NEED&&(!host||MAP_CTRL.every(i=>this.slotOn(i)));
     $('coopStart').hidden=!(host&&ok);
     $('waitMsg').textContent=host?(n<2?'친구에게 이 게임 링크와 방 코드를 알려주세요. 4명까지 들어올 수 있어요.':n<MAP_NEED?`이 맵은 ${MAP_NEED}명이 필요해요. 친구를 조금 더 기다려요. (지금 ${n}명)`:`${n}명이 모였어요! 영업을 시작해 볼까요?`+(n<4?' 더 기다려도 돼요.':'')):'방장이 영업을 시작하면 바로 같이 시작돼요.';
     $('codeLbl').textContent=(host?'방 코드 (친구에게 알려주세요)':'들어온 방')+' · 맵: '+curMap.name;
@@ -2562,7 +2569,7 @@ const NET={
       if(!host){ throw '그 코드의 방을 찾을 수 없어요. 코드를 다시 확인해 주세요.'; }
       if(this.hostSlots().every(Boolean)||host.presence.full){ throw '이미 4명이 들어가 있는 방이에요.'; }
       let mine=null; try{ mine=r.peers().find(p=>p.isMe)||null; }catch(_){}
-      this.myId=mine&&mine.peer;
+      this.myId=mine&&mine.peer; if(!this.myId) throw '방에 들어가지 못했어요. 다시 해 주세요.';
       await r.presence({role:'guest'});
       // 방장이 자리(2P~4P)를 정해 줄 때까지 기다려요
       let slot=-1; const t1=performance.now();
@@ -2600,8 +2607,8 @@ const NET={
     if(this.mode!=='host'||!this.room) return;
     this.pushT-=dt; if(dt<1&&this.pushT>0) return; this.pushT=1/15;
     // 방 정보(맵·자리)와 합쳐 4KB를 넘지 않게 상태 크기를 맞춰요
-    const base=JSON.stringify({role:'host',mp:curMap.grid,mn:curMap.name,sl:this.slots}).length;
-    this.room.presence({g:snap(Math.max(1500,3950-base))}).catch(()=>{});
+    const base=u8len(JSON.stringify({role:'host',mp:curMap.grid,mn:curMap.name.slice(0,20),sl:this.slots,g:0}));
+    this.room.presence({g:snap(Math.max(900,3900-base))}).catch(()=>{});
   },
   // 방장: 친구 위치·바라보는 곳·누른 E를 읽어요
   hostPull(dt){
@@ -2636,6 +2643,7 @@ const NET={
       const h=this.findPeer('host');
       if(!h){ this.hostGone+=dt; if(this.hostGone>5){ this.leave('방장이 나갔거나 연결이 끊겼어요.'); return; } }
       else { this.hostGone=0;
+        if(state!=='play'&&state!=='paused'){ const k=this.hostSlots().indexOf(this.myId); if(k>=0&&k+1!==me){ me=k+1; players.forEach((p,i)=>p.active=i===0||i===me); this.renderWait(); } }
         const mp=h.presence.mp; if(validGridStr(mp)&&mp!==curMap.grid){ curMap={id:'remote',name:typeof h.presence.mn==='string'?h.presence.mn.slice(0,20):'방장의 맵',grid:mp}; buildKitchen(mp,true); MAPS.showCur(); this.renderWait(); }
         const g=h.presence.g; if(g&&g!==this.lastG){ this.lastG=g; applySnap(g); } }
       if(state==='play') players.forEach((p,i)=>{ if(i!==me&&p.active) followRemote(p,dt); });
@@ -2738,7 +2746,8 @@ const MAPS={
     }catch(e){}
   },
   showCur(){ $('curMapName').textContent=curMap.name+(MAP_DUO?` (${MAP_NEED}인용)`:''); },
-  select(m){ curMap={id:m.id,name:m.name,grid:m.grid}; buildKitchen(m.grid,true); this.showCur(); },
+  select(m){ curMap={id:m.id,name:m.name,grid:m.grid}; buildKitchen(m.grid,true); this.showCur();
+    if(NET.mode==='host'&&NET.room){ NET.room.presence({mp:curMap.grid,mn:curMap.name.slice(0,20)}).catch(()=>{}); NET.assign(); NET.renderWait(); } },   // 방장이 방을 연 뒤에 맵을 바꿔도 친구들에게 전해요
   open(){ show('mapScr'); this.render(); },
   render(){
     document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.tab===this.tab));
@@ -2817,14 +2826,14 @@ const ED={
   rotBrush(){ const o='>v<^'; this.beltDir=o[(o.indexOf(this.beltDir)+1)%4]; if(isBelt(this.tool)) this.tool=this.beltDir; },
   set(x,y,c,drag){
     if(x<0||y<0||x>=MW||y>=MH) return;
-    const i=y*MW+x; const ext=this.grid.slice(gBase(this.grid).length);
+    const i=y*MW+x; const ext=this.grid.slice(gBase(this.grid).length); let prevChanged=false;
     if(isBelt(c)){
       // 끌면서 칠하면 움직인 방향으로, 같은 벨트를 다시 누르면 시계 방향으로 돌아가요
       if(drag&&this.last){ const dx=x-this.last[0], dy=y-this.last[1]; const d=dx>0?'>':dx<0?'<':dy>0?'v':dy<0?'^':null;
-        if(d){ c=d; this.beltDir=d; this.tool=d; const li=this.last[1]*MW+this.last[0]; if(isBelt(this.grid[li])&&this.grid[li]!==d){ const g0=this.grid.split(''); g0[li]=d; this.grid=g0.join(''); } } }
+        if(d){ c=d; this.beltDir=d; this.tool=d; const li=this.last[1]*MW+this.last[0]; if(isBelt(this.grid[li])&&this.grid[li]!==d){ const g0=this.grid.split(''); g0[li]=d; this.grid=g0.join(''); prevChanged=true; } } }
       else if(!drag&&isBelt(this.grid[i])){ const o='>v<^'; c=o[(o.indexOf(this.grid[i])+1)%4]; this.beltDir=c; this.tool=c; }
       this.last=[x,y]; this.renderPal(); }
-    if(this.grid[i]===c) return;
+    if(this.grid[i]===c){ if(prevChanged){ this.dirty=true; buildKitchen(this.grid,false); this.check(); this.autosave(); } return; }
     let g=gBase(this.grid).split('');
     if(c==='L'||c==='P'||c==='G') g=g.map(ch=>ch===c?'#':ch);   // 하나만 있는 기구는 옮겨져요
     if(c==='1'||c==='2'||c==='3'||c==='4') g=g.map(ch=>ch===c?'.':ch);   // 시작 위치도 하나씩만
