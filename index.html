@@ -402,7 +402,8 @@ kbd{font-family:var(--font)!important;font-weight:900;letter-spacing:.5px}
 
 <div class="screen" id="pauseScr" hidden>
   <div class="panel" style="max-width:380px;text-align:center">
-    <div class="big" style="font-size:44px">잠깐 쉬는 중</div>
+    <div class="big" style="font-size:44px" id="pauseTitle">잠깐 쉬는 중</div>
+    <p class="sub" id="pauseSub" style="margin:0" hidden></p>
     <button class="btn" id="resumeBtn">계속하기 (<span data-k="pause">Esc</span>)</button>
     <button class="btn alt sm" id="pauseKeys">설정 (소리 · 조작 키)</button>
     <button class="btn" id="quitBtn" style="font-size:18px;background:#fff;color:var(--navy);border-color:var(--navy);box-shadow:0 5px 0 var(--navy-deep)">처음으로</button>
@@ -2232,12 +2233,26 @@ function renderTitle(dt){ if(state!=='title'&&state!=='end') return; tT+=dt; tch
 
 /* ---------------- 화면 전환 ---------------- */
 const $=id=>document.getElementById(id);
-function show(id){ ['titleScr','pauseScr','endScr','coopScr','mapScr','helpScr','keyScr'].forEach(s=>$(s).hidden=s!==id); document.body.classList.toggle('inmenu',['titleScr','coopScr','mapScr','helpScr'].concat(state==='paused'?[]:['keyScr']).includes(id)); }
+function show(id){ ['titleScr','pauseScr','endScr','coopScr','mapScr','helpScr','keyScr'].forEach(s=>$(s).hidden=s!==id); document.body.classList.toggle('inmenu',['titleScr','coopScr','mapScr','helpScr'].concat(state==='paused'||guestMenu?[]:['keyScr']).includes(id)); }
 $('helpBtn').onclick=()=>show('helpScr'); $('helpBack').onclick=()=>show('titleScr');
 function startGame(){ if(NET.mode==='guest') return; if(NET.mode==='host'&&!NET.canStart()){ NET.open(); return; } audio(); resetGame(); state='play'; show(null); lastTick=-1; toast(MAP_DUO&&NET.mode==='solo'?`${MAP_NEED}인용 맵: ${keyLabel(KB.swap)}로 캐릭터를 바꿔요`:'영업 시작!'); if(NET.mode==='host') NET.hostPush(1); }
-function pause(on){ if(on&&NET.mode!=='solo'){ if(state==='play') toast('같이 할 때는 멈출 수 없어요'); return; }
-  if(on&&state==='play'){ state='paused'; show('pauseScr'); Object.keys(keys).forEach(k=>keys[k]=false); } else if(!on&&state==='paused'){ state='play'; show(null); last=performance.now(); } }
-function endGame(){
+/* 일시정지: 혼자·방장은 게임 전체를 멈추고(방장이 멈추면 모두 멈춰요), 친구는 게임이 계속되는 개인 메뉴만 열어요 */
+let guestMenu=false;
+function pauseText(){
+  const g=NET.mode==='guest', hostPaused=g&&state==='paused';
+  $('pauseTitle').textContent=hostPaused?'방장이 잠깐 멈췄어요':g?'메뉴':'잠깐 쉬는 중';
+  $('pauseSub').hidden=NET.mode==='solo'; $('pauseSub').textContent=hostPaused?'방장이 다시 시작하면 바로 이어져요.':g?'게임은 계속 진행 중이에요. 멈추기는 방장만 할 수 있어요.':'친구들 화면도 함께 멈췄어요.';
+  $('resumeBtn').hidden=hostPaused;
+  $('quitBtn').textContent=NET.mode==='solo'?'처음으로':'방 나가기';
+}
+function pause(on){
+  if(NET.mode==='guest'){   // 친구: 게임은 계속, 메뉴만 열고 닫아요
+    if(on&&state==='play'&&!guestMenu){ guestMenu=true; Object.keys(keys).forEach(k=>keys[k]=false); pauseText(); show('pauseScr'); }
+    else if(!on&&guestMenu){ guestMenu=false; if(state==='play') show(null); }
+    return; }
+  if(on&&state==='play'){ state='paused'; pauseText(); show('pauseScr'); Object.keys(keys).forEach(k=>keys[k]=false); if(NET.mode==='host') NET.hostPush(1); }
+  else if(!on&&state==='paused'){ state='play'; show(null); last=performance.now(); if(NET.mode==='host') NET.hostPush(1); } }
+function endGame(){ guestMenu=false;
   state='end'; SFX.end(); show('endScr'); players.forEach(p=>p.target=null);
   if(NET.mode==='host') NET.hostPush(1);
   $('againBtn').hidden=NET.mode==='guest'; $('againNote').hidden=NET.mode!=='guest'; $('leaveBtn').hidden=NET.mode==='solo'; $('editBackBtn').hidden=!ED.testing;
@@ -2252,18 +2267,18 @@ function endGame(){
 }
 $('startBtn').onclick=startGame; $('againBtn').onclick=startGame;
 $('resumeBtn').onclick=()=>pause(false);
-$('quitBtn').onclick=()=>{ if(ED.testing){ ED.back(); return; } state='title'; show('titleScr'); orders=[]; $('orders').innerHTML=''; };
+$('quitBtn').onclick=()=>{ if(ED.testing){ ED.back(); return; } guestMenu=false; if(NET.room){ NET.leave(); return; } state='title'; show('titleScr'); orders=[]; $('orders').innerHTML=''; };
 $('leaveBtn').onclick=()=>NET.leave();
 addEventListener('keydown',e=>{
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
-  if(KEYS_UI.wait){ KEYS_UI.press(e); return; }
+  if(KEYS_UI.wait){ if($('keyScr').hidden) KEYS_UI.wait=null; else { KEYS_UI.press(e); return; } }   // 다른 화면으로 바뀌었으면 키 기다리기를 그만둬요
   if(e.target&&e.target.tagName==='INPUT'){ if(e.code==='Enter'&&e.target.id==='codeIn'){ e.preventDefault(); $('joinBtn').click(); } return; }
   if(state==='edit'){ ED.key(e); return; }
   if(e.code==='Enter'&&(state==='title'||state==='end')){ e.preventDefault(); if(!$('mapScr').hidden) return; if(!$('coopScr').hidden){ if(!$('coopStart').hidden) startGame(); return; } if(NET.mode==='solo'&&(!$('titleScr').hidden||state==='end')) startGame(); else if(NET.mode==='host') startGame(); return; }
   const kc=normKey(e.code);
   if(!$('keyScr').hidden){ if(e.code==='Escape') $('keyBack').click(); return; }
-  if(e.code==='Escape'||kc===KB.pause){ e.preventDefault(); if(state==='play') pause(true); else if(state==='paused') pause(false); return; }
-  if(state!=='play') return;
+  if(e.code==='Escape'||kc===KB.pause){ e.preventDefault(); if(guestMenu) pause(false); else if(state==='play') pause(true); else if(state==='paused') pause(false); return; }
+  if(state!=='play'||guestMenu) return;
   keys[kc]=true; if(kc===KB.swap||kc===KB.dash||kc===KB.throw||kc===KB.interact) e.preventDefault();
   if(e.repeat) return;
   if(kc===KB.swap&&NET.mode==='solo'&&MAP_DUO){ e.preventDefault(); const o=L(); o.vx=o.vz=0; o.dashT=0; o.anim='idle'; me=MAP_CTRL[(MAP_CTRL.indexOf(me)+1)%MAP_CTRL.length]; toast(`${me+1}P로 바꿨어요`); return; }
@@ -2273,7 +2288,10 @@ addEventListener('keydown',e=>{
 });
 addEventListener('keyup',e=>{ keys[normKey(e.code)]=false; keys[e.code]=false; });
 $('keysBtn').onclick=()=>KEYS_UI.open('titleScr'); $('pauseKeys').onclick=()=>KEYS_UI.open('pauseScr');
-$('keyBack').onclick=()=>{ KEYS_UI.wait=null; show(KEYS_UI.from); };
+$('keyBack').onclick=()=>{ KEYS_UI.wait=null;
+  // 친구: 설정을 보는 사이 방장이 멈추거나 다시 시작했을 수 있어요
+  if(KEYS_UI.from==='pauseScr'&&NET.mode==='guest'&&state==='play'&&!guestMenu){ show(null); return; }
+  if(KEYS_UI.from==='pauseScr') pauseText(); show(KEYS_UI.from); };
 $('keyReset').onclick=()=>{ KEY_ACT.forEach(([a,,d])=>KB[a]=d); KEYS_UI.save(); KEYS_UI.render(); toast('처음 설정으로 되돌렸어요'); };
 updKeyLabels();
 function volUI(){ $('volM').value=Math.round(VOL.m*100); $('volS').value=Math.round(VOL.s*100); $('volMv').textContent=$('volM').value+'%'; $('volSv').textContent=$('volS').value+'%'; }
@@ -2364,12 +2382,20 @@ function applySnap(g){
     if(typeof e.t==='string') toast(e.t.slice(0,40),!!e.b);
     if(typeof e.pop==='string') popText(e.pop.slice(0,8),{x:num(e.x),y:num(e.y)});
     if(Number.isInteger(e.ch)&&players[e.ch]) players[e.ch].cheerT=.9; });
-  // 화면 전환
-  if(g.st==='play'&&state!=='play'){
+  // 화면 전환 (방장이 멈춤/다시 시작)
+  // 설정 화면을 보고 있으면 화면은 그대로 두고 상태만 바꿔요 (돌아갈 때 맞춰 보여줘요)
+  const gshow=id=>{ if($('keyScr').hidden) show(id); };
+  const halt=()=>{ Object.keys(keys).forEach(k=>keys[k]=false); const P=L(); P.vx=P.vz=0; P.dashT=0; };
+  if(g.st==='paused'&&state==='play'){ state='paused'; halt(); pauseText(); gshow('pauseScr'); }
+  else if(g.st==='play'&&state==='paused'){ state='play'; if(guestMenu){ pauseText(); gshow('pauseScr'); } else gshow(null); lastTick=-1; }
+  else if(g.st==='end'&&state==='paused'){ state='play'; guestMenu=false; updHud(); endGame(); }
+  else if((g.st==='play'||g.st==='paused')&&state!=='play'&&state!=='paused'){
     audio(); state='play'; show(null); lastTick=-1; toast('영업 시작!');
     L().active=true;
     Object.assign(L(),{x:SPAWN[me][0],z:SPAWN[me][1],vx:0,vz:0,fx:0,fz:1,dashT:0,dashCd:0});
     players.forEach((p,i)=>{ if(i!==me) Object.assign(p,{x:p.tx,z:p.tz}); });
+    // 방장이 멈춘 사이에 들어왔으면 멈춤 화면부터 보여줘요
+    if(g.st==='paused'){ state='paused'; halt(); pauseText(); show('pauseScr'); toast('방장이 잠깐 멈춘 상태예요'); }
   } else if(g.st==='end'&&state==='play'){ updHud(); endGame(); }
   updHud();
 }
@@ -2555,7 +2581,7 @@ const NET={
     if(!$('coopScr').hidden) this.renderWait();
   },
   lost(e){ if(this.room) this.leave('같이 하기 연결이 끊겼어요.'); },
-  leave(msg){
+  leave(msg){ guestMenu=false;
     const r=this.room; this.room=null; this.mode='solo'; me=0;
     players.forEach((p,i)=>{ if(i) p.active=false; p.hold=null; p.target=null; });
     if(r) r.leave().catch(()=>{});
@@ -2603,7 +2629,7 @@ const NET={
     if(!this.room) return;
     const nb=$('net'); const on=this.room.connected();
     this.offT=on?0:this.offT+dt;
-    nb.hidden=state!=='play'; nb.textContent=this.offT>2?'연결이 불안정해요':`같이 하기 · ${this.code}`; nb.classList.toggle('bad',this.offT>2);
+    nb.hidden=state!=='play'||guestMenu; nb.textContent=this.offT>2?'연결이 불안정해요':`같이 하기 · ${this.code}`; nb.classList.toggle('bad',this.offT>2);
     if(this.mode==='host'){
       if(state!=='play'){ this.idleT-=dt; if(this.idleT<=0){ this.idleT=.4; this.hostPush(1); } }
     } else if(this.mode==='guest'){
