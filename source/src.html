@@ -234,7 +234,8 @@ body.inmenu #score,body.inmenu #timer{display:none}
 .klist{display:grid;gap:6px;max-height:42vh;overflow:auto;padding:2px}
 .vol{display:grid;gap:8px;background:#fff;border-radius:14px;padding:10px 14px;box-shadow:0 2px 10px rgba(12,39,102,.08)}
 .vol label{display:grid;grid-template-columns:76px 1fr 44px;align-items:center;gap:10px;font-size:15px;color:var(--navy)}
-.vol input{pointer-events:auto;accent-color:var(--navy);width:100%}
+.vol input,.vol select{pointer-events:auto;accent-color:var(--navy);width:100%}
+.vol select{font:inherit;font-size:14px;color:var(--navy);border:2px solid #d8e0f2;border-radius:8px;padding:3px 6px;background:#fff}
 .vol b{font-weight:800;text-align:right;font-variant-numeric:tabular-nums}
 .krow{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#fff;border-radius:12px;padding:6px 6px 6px 14px;box-shadow:0 2px 10px rgba(12,39,102,.08);font-size:16px}
 .krow button{pointer-events:auto;font-family:var(--font);font-weight:900;font-size:15px;min-width:96px;border:0;border-radius:10px;padding:8px 12px;background:var(--navy);color:#fff;cursor:pointer}
@@ -393,7 +394,8 @@ kbd{font-family:var(--font)!important;font-weight:900;letter-spacing:.5px}
   <div class="panel" style="max-width:520px">
     <div class="big" style="font-size:36px">설정</div>
     <div class="vol"><label><span>배경음악</span><input type="range" id="volM" min="0" max="100" step="5"><b id="volMv"></b></label>
-      <label><span>효과음</span><input type="range" id="volS" min="0" max="100" step="5"><b id="volSv"></b></label></div>
+      <label><span>효과음</span><input type="range" id="volS" min="0" max="100" step="5"><b id="volSv"></b></label>
+      <label><span>그래픽</span><select id="gfxSel"><option value="auto">자동 (느리면 가볍게)</option><option value="high">선명하게</option><option value="low">가볍게 (느린 기기)</option></select><b id="gfxV"></b></label></div>
     <p class="sub" style="text-align:center;margin:0;font-size:15px">조작 키: 바꿀 동작을 누르고 원하는 키를 눌러요. 이미 쓰는 키면 두 동작의 키를 서로 바꿔요. 방향키는 항상 이동으로도 쓸 수 있어요.</p>
     <div class="klist" id="keyList"></div>
     <div class="btnrow"><button class="btn sm alt" id="keyReset">처음 설정으로</button><button class="btn sm" id="keyBack">다 했어요</button></div>
@@ -611,14 +613,21 @@ function musUpdate(){
 /* ---------------- 3D 기본 ---------------- */
 const T=THREE;
 const canvas=document.getElementById('c');
-const renderer=new T.WebGLRenderer({canvas,antialias:true});
-// 해상도는 최대 1.5배, 프레임이 무거우면 자동으로 1배까지 낮춰요
-let PR=Math.min(window.devicePixelRatio||1,1.5); renderer.setPixelRatio(PR);
+// 그래픽: 자동(느리면 알아서 가볍게) / 선명하게 / 가볍게
+const GFX_LS='waffle-rush-gfx-v1';
+const GFX={mode:(()=>{ try{ const v=localStorage.getItem(GFX_LS); return v==='high'||v==='low'?v:'auto'; }catch(e){ return 'auto'; } })(), autoLow:false, low:false, shT:0};
+// 휴대폰·태블릿이나 코어·메모리가 적은 기기는 처음부터 가볍게 시작해요
+GFX.weak=(()=>{ try{ const n=navigator, coarse=matchMedia('(pointer:coarse)').matches; return coarse||(n.hardwareConcurrency||8)<=4||(n.deviceMemory||8)<=4; }catch(e){ return false; } })();
+GFX.autoLow=GFX.weak;
+const lowAtStart=GFX.mode==='low'||(GFX.mode==='auto'&&GFX.weak);
+const renderer=new T.WebGLRenderer({canvas,antialias:!lowAtStart&&(window.devicePixelRatio||1)<2,powerPreference:'high-performance'});
+// 해상도는 최대 1.5배(가볍게는 1배), 프레임이 무거우면 자동으로 더 낮춰요
+let PR=Math.min(window.devicePixelRatio||1,lowAtStart?1:1.5); renderer.setPixelRatio(PR);
 WK.setupRenderer(renderer);
 const scene=new T.Scene(); scene.background=new T.Color('#bfe6ff');
 const camera=new T.PerspectiveCamera(38,1,.1,140);
 const LOOK=new T.Vector3(6.5,0,4.1), LOOK_E=new T.Vector3(7.7,0,4.75);
-const SUN=WK.setupLights(scene,new T.Vector3(6,0,3),2048,14);
+const SUN=WK.setupLights(scene,new T.Vector3(6,0,3),lowAtStart?1024:2048,14);
 let FLOOR=null, ENV=null, WORLD='', CAMK=1;
 // 주방 크기에 맞춰 가게 바닥·벽·홀·손님 줄·조명·카메라 중심을 다시 만들어요
 function setWorldSize(w,h){
@@ -626,7 +635,7 @@ function setWorldSize(w,h){
   if(FLOOR){ scene.remove(FLOOR); FLOOR.geometry.dispose(); }
   FLOOR=WK.makeFloor(MW,MH); FLOOR.position.set((MW-1)/2,.002,(MH-1)/2); scene.add(FLOOR);
   if(ENV){ scene.remove(ENV.root); ENV.root.traverse(o=>{ if(o.userData&&o.userData.baked&&o.geometry) o.geometry.dispose(); }); }
-  ENV=WK.makeEnvironment(MW,MH,{serveZ:Math.min(2.5,MH-2)}); scene.add(ENV.root); WK.bake(ENV.root);
+  ENV=WK.makeEnvironment(MW,MH,{serveZ:Math.min(2.5,MH-2)}); scene.add(ENV.root); WK.bake(ENV.root); GFX.shT=0;
   LOOK.set((MW-1)/2+.5,0,(MH-1)/2+.1);
   // 크기에 따라 카메라 거리 배수 (13×9 = 1)
   CAMK=Math.max(.78,MW/13,MH/9);
@@ -686,6 +695,7 @@ function disposeKitchen(){
   KG.clear();
 }
 function buildKitchen(grid,bake){
+  GFX.shT=0;
   const dm=gDim(grid)||{w:13,h:9}; setWorldSize(dm.w,dm.h);
   disposeKitchen(); tiles=[]; stations=[]; let firstServe=true; const rows=rowsOf(gBase(grid));
   const ext=gExt(grid); MAP_EXT=ext; const swapCells=new Set(); ext.s.forEach(r=>[...r.a,...r.b].forEach(i=>swapCells.add(i)));
@@ -799,10 +809,12 @@ const sel=new T.Group(); sel.userData.dyn=true; scene.add(sel);
 // 1P 남색, 2P 딸기색, 3P 민트초록, 4P 귤색 가운
 const PCOL=['#2456c4','#e0475b','#2f9e5b','#e08a1e'];
 const PCOLS=[null,{main:'#e0475b',dark:'#a92a3f',stripe:'rgba(110,10,30,.3)'},{main:'#2f9e5b',dark:'#1d6e3e',stripe:'rgba(10,70,30,.3)'},{main:'#e08a1e',dark:'#a35f0b',stripe:'rgba(110,60,0,.3)'}];
+const BLOB_G=new T.CircleGeometry(.4,20), BLOB_M=new T.MeshBasicMaterial({color:0x3a2a1a,transparent:true,opacity:.26,depthWrite:false});
 function mkPlayer(i){
   const chef=WK.makeChef({faceCam:.65,tilt:.3,colors:PCOLS[i]}); chef.root.scale.setScalar(1.15); scene.add(chef.root);
   const handG=new T.Group(); handG.scale.setScalar(.85); chef.holdSlot.add(handG);
-  return {i,x:SPAWN[i][0],z:SPAWN[i][1],tx:SPAWN[i][0],tz:SPAWN[i][1],vx:0,vz:0,fx:0,fz:1,hold:null,dashT:0,dashCd:0,walk:0,sig:null,target:null,cheerT:0,anim:'idle',active:i===0,chef,handG};
+  const blob=new T.Mesh(BLOB_G,BLOB_M); blob.rotation.x=-Math.PI/2; blob.renderOrder=1; blob.visible=false; scene.add(blob);
+  return {blob,i,x:SPAWN[i][0],z:SPAWN[i][1],tx:SPAWN[i][0],tz:SPAWN[i][1],vx:0,vz:0,fx:0,fz:1,hold:null,dashT:0,dashCd:0,walk:0,sig:null,target:null,cheerT:0,anim:'idle',active:i===0,chef,handG};
 }
 const players=[0,1,2,3].map(mkPlayer);
 let me=0; const L=()=>players[me];
@@ -1395,6 +1407,7 @@ function render(t,dt){
   // 캐릭터 모션
   players.forEach(p=>{
     p.chef.root.visible=p.active&&state!=='edit';
+    p.blob.visible=GFX.low&&p.chef.root.visible; if(p.blob.visible) p.blob.position.set(p.x,.012,p.z);
     if(p.tag) p.tag.hidden=!(p.active&&(NET.mode!=='solo'||MAP_DUO)&&state==='play');
     if(!p.active) return;
     if(p.i===me) p.anim=animOf(p);
@@ -1419,7 +1432,18 @@ function render(t,dt){
   if(state==='title'&&!$('titleScr').hidden){ const a=Math.sin(t*.00018)*.32, k=camFit(false); camSway=true;
     camera.position.set(LOOK.x+Math.sin(a)*8.9*k,LOOK.y+11.4*k,LOOK.z+Math.cos(a)*8.9*k); camera.lookAt(LOOK); }
   else if(camSway){ camSway=false; resize(); }
+  if(GFX.low){ GFX.shT-=dt; if(GFX.shT<=0){ GFX.shT=.4; players.forEach(p=>p.chef.root.traverse(o=>{ if(o.isMesh) o.castShadow=false; })); WK.setLowMat(scene,true); renderer.shadowMap.needsUpdate=true; } }
   renderer.render(scene,camera);
+}
+function applyGfx(){
+  const low=GFX.mode==='low'||(GFX.mode==='auto'&&GFX.autoLow); const was=GFX.low; GFX.low=low;
+  renderer.shadowMap.autoUpdate=!low; renderer.shadowMap.needsUpdate=true; GFX.shT=0;
+  const sz=low?1024:(GFX.mode==='high'||perf.step<2?2048:1024);
+  if(SUN.shadow.mapSize.x!==sz){ SUN.shadow.mapSize.set(sz,sz); if(SUN.shadow.map){ SUN.shadow.map.dispose(); SUN.shadow.map=null; } }
+  const pr=Math.min(window.devicePixelRatio||1,low?1:(perf.step>0&&GFX.mode!=='high'?1:1.5)); if(pr!==PR){ PR=pr; renderer.setPixelRatio(PR); resize(); }
+  if(was&&!low){ players.forEach(p=>p.chef.root.traverse(o=>{ if(o.isMesh) o.castShadow=true; })); WK.setLowMat(scene,false); }
+  if(low) WK.setLowMat(scene,true);
+  const v=$('gfxV'); if(v) v.textContent=low?'가볍게':'선명';
 }
 // 주방 전체가 화면에 들어오는 카메라 거리 배수: 가로는 화면 비율, 세로는 줄 수에 맞춰요
 function camFit(ed){ const kw=(MW/13)*1.55/camera.aspect, kh=MH/9; return Math.max(.78,kw,kh,MW/13)*(ed?1.22:1); }
@@ -1437,9 +1461,11 @@ const perf={n:0,sum:0,step:0};
 function autoQuality(raw){
   if(document.hidden||raw>.25) return; perf.n++; perf.sum+=raw;
   if(perf.n<120) return; const avg=perf.sum/perf.n; perf.n=0; perf.sum=0;
-  if(avg<.024||perf.step>=2) return;
+  if(avg<.024||perf.step>=3||GFX.mode==='high') return;
   if(perf.step===0&&PR>1){ PR=1; renderer.setPixelRatio(PR); resize(); }
   else if(SUN.shadow.mapSize.x>1024){ SUN.shadow.mapSize.set(1024,1024); if(SUN.shadow.map){ SUN.shadow.map.dispose(); SUN.shadow.map=null; } perf.step=1; }
+  else if(!GFX.low&&GFX.mode==='auto'){ GFX.autoLow=true; applyGfx(); perf.step=2; }
+  else if(GFX.low&&PR>.75){ PR=.75; renderer.setPixelRatio(PR); resize(); perf.step=2; }
   perf.step++;
 }
 function loop(t){
@@ -1455,7 +1481,7 @@ requestAnimationFrame(loop);
 
 /* ---------------- 시작 화면 캐릭터 ---------------- */
 const tcv=document.getElementById('titleCv');
-const tr=new T.WebGLRenderer({canvas:tcv,antialias:true,alpha:true}); tr.setPixelRatio(Math.min(window.devicePixelRatio||1,2)); tr.setSize(260,300,false); tr.outputEncoding=T.sRGBEncoding;
+const tr=new T.WebGLRenderer({canvas:tcv,antialias:true,alpha:true}); tr.setPixelRatio(Math.min(window.devicePixelRatio||1,lowAtStart?1:2)); tr.setSize(260,300,false); tr.outputEncoding=T.sRGBEncoding;
 const ts=new T.Scene(); ts.add(new T.HemisphereLight(WK.lin('#fff8ec'),WK.lin('#c9ad86'),1.05)); { const d=new T.DirectionalLight(0xffffff,.5); d.position.set(-2,4,5); ts.add(d); }
 const tchef=WK.makeChef(); ts.add(tchef.root); tchef.root.rotation.y=.35;
 const tcam=new T.PerspectiveCamera(30,260/300,.1,20); tcam.position.set(0,.85,3.4); tcam.lookAt(0,.72,0);
@@ -1464,6 +1490,9 @@ function renderTitle(dt){ if(state!=='title'&&state!=='end') return; tT+=dt; tch
 
 /* ---------------- 화면 전환 ---------------- */
 const $=id=>document.getElementById(id);
+$('gfxSel').value=GFX.mode;
+$('gfxSel').onchange=e=>{ GFX.mode=e.target.value; try{ localStorage.setItem(GFX_LS,GFX.mode); }catch(er){} if(GFX.mode!=='auto'){ perf.step=GFX.mode==='low'?3:0; } else { GFX.autoLow=GFX.weak; perf.step=0; perf.n=0; perf.sum=0; } applyGfx(); };
+applyGfx();
 function show(id){ ['titleScr','pauseScr','endScr','coopScr','mapScr','helpScr','keyScr'].forEach(s=>$(s).hidden=s!==id); document.body.classList.toggle('inmenu',['titleScr','coopScr','mapScr','helpScr'].concat(state==='paused'||guestMenu?[]:['keyScr']).includes(id)); }
 $('helpBtn').onclick=()=>show('helpScr'); $('helpBack').onclick=()=>show('titleScr');
 function startGame(){ if(NET.mode==='guest') return; if(NET.mode==='host'&&!NET.canStart()){ NET.open(); return; } audio(); resetGame(); state='play'; show(null); lastTick=-1; toast(MAP_DUO&&NET.mode==='solo'?`${MAP_NEED}인용 맵: ${keyLabel(KB.swap)}로 캐릭터를 바꿔요`:'영업 시작!'); if(NET.mode==='host') NET.hostPush(1); }

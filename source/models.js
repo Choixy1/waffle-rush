@@ -25,7 +25,7 @@ function rbox(w,h,d,r=.08,bev=.03){
     const s=new T.Shape(), x=-w/2+bev, y=-d/2+bev, W=w-2*bev, D=d-2*bev, rr=Math.max(.001,Math.min(r,W/2,D/2));
     s.moveTo(x+rr,y); s.lineTo(x+W-rr,y); s.absarc(x+W-rr,y+rr,rr,-Math.PI/2,0); s.lineTo(x+W,y+D-rr); s.absarc(x+W-rr,y+D-rr,rr,0,Math.PI/2);
     s.lineTo(x+rr,y+D); s.absarc(x+rr,y+D-rr,rr,Math.PI/2,Math.PI); s.lineTo(x,y+rr); s.absarc(x+rr,y+rr,rr,Math.PI,Math.PI*1.5);
-    const g=new T.ExtrudeGeometry(s,{depth:Math.max(.001,h-2*bev),bevelEnabled:true,bevelThickness:bev,bevelSize:bev,bevelSegments:2,curveSegments:5});
+    const g=new T.ExtrudeGeometry(s,{depth:Math.max(.001,h-2*bev),bevelEnabled:true,bevelThickness:bev,bevelSize:bev,bevelSegments:1,curveSegments:3});
     g.rotateX(-Math.PI/2); g.translate(0,bev-h/2,0); g.computeVertexNormals(); return g;
   });
 }
@@ -34,14 +34,16 @@ function rboxUV(w,h,d,r,bev){
   return G(`rbuv${w}_${h}_${d}_${r}_${bev}`,()=>{ const g=rbox(w,h,d,r,bev).clone(); const uv=g.attributes.uv, p=g.attributes.position;
     for(let i=0;i<uv.count;i++){ uv.setXY(i,(p.getX(i)+w/2)/w,(-p.getZ(i)+d/2)/d); } uv.needsUpdate=true; return g; });
 }
-const cyl=(a,b,h,s=32)=>G(`c${a}_${b}_${h}_${s}`,()=>new T.CylinderGeometry(a,b,h,s));
-const sph=(r,s=18)=>G(`s${r}_${s}`,()=>new T.SphereGeometry(r,s,Math.max(10,s*.7|0)));
+// 작은 물체는 면을 덜 나눠요 (느린 기기에서 그리는 양을 줄여요)
+const segFor=(r,s)=>Math.min(s,r<.03?8:r<.08?12:r<.16?18:r<.3?24:s);
+const cyl=(a,b,h,s=32)=>{ s=segFor(Math.max(a,b),s); return G(`c${a}_${b}_${h}_${s}`,()=>new T.CylinderGeometry(a,b,h,s)); };
+const sph=(r,s=18)=>{ s=Math.min(s,r<.03?8:r<.08?10:14); return G(`s${r}_${s}`,()=>new T.SphereGeometry(r,s,Math.max(6,s*.7|0))); };
 const circ=(r,s=32,a0=0,a1=Math.PI*2)=>G(`ci${r}_${s}_${a0}_${a1}`,()=>new T.CircleGeometry(r,s,a0,a1));
-const tor=(R,r,rs=10,ts=40,arc=Math.PI*2)=>G(`t${R}_${r}_${rs}_${ts}_${arc}`,()=>new T.TorusGeometry(R,r,rs,ts,arc));
+const tor=(R,r,rs=10,ts=40,arc=Math.PI*2)=>(rs=Math.min(rs,r<.012?5:r<.03?7:rs),ts=Math.min(ts,Math.max(12,Math.round(R*120))),G(`t${R}_${r}_${rs}_${ts}_${arc}`,()=>new T.TorusGeometry(R,r,rs,ts,arc)));
 function capsule(r,len,s=24){ return G(`cap${r}_${len}`,()=>{ const pts=[]; for(let i=0;i<=8;i++){ const a=-Math.PI/2+i/8*Math.PI/2; pts.push(new T.Vector2(Math.max(.0001,Math.cos(a)*r),Math.sin(a)*r-len/2)); } for(let i=0;i<=8;i++){ const a=i/8*Math.PI/2; pts.push(new T.Vector2(Math.max(.0001,Math.cos(a)*r),Math.sin(a)*r+len/2)); } return new T.LatheGeometry(pts,s); }); }
 
 /* 텍스처 */
-function canvasTex(w,h,draw){ const cv=document.createElement('canvas'); cv.width=w; cv.height=h; draw(cv.getContext('2d'),w,h); const t=new T.CanvasTexture(cv); t.anisotropy=8; t.encoding=T.sRGBEncoding; return t; }
+function canvasTex(w,h,draw){ const cv=document.createElement('canvas'); cv.width=w; cv.height=h; draw(cv.getContext('2d'),w,h); const t=new T.CanvasTexture(cv); t.anisotropy=4; t.encoding=T.sRGBEncoding; return t; }
 function rr(x,X,Y,W,H,R){ x.beginPath(); x.moveTo(X+R,Y); x.arcTo(X+W,Y,X+W,Y+H,R); x.arcTo(X+W,Y+H,X,Y+H,R); x.arcTo(X,Y+H,X,Y,R); x.arcTo(X,Y,X+W,Y,R); x.closePath(); }
 function waffleFace(base,cell,deep,hi,n,pad){
   return canvasTex(512,512,(x,w)=>{
@@ -98,7 +100,7 @@ function signTex(k,bg='#fffaf0',fg='#173f95'){
   const key=k+bg; if(iconCache[key]) return iconCache[key];
   const cv=document.createElement('canvas'); cv.width=cv.height=256; const x=cv.getContext('2d');
   x.fillStyle=fg; rr(x,6,6,244,244,56); x.fill(); x.fillStyle=bg; rr(x,18,18,220,220,46); x.fill();
-  const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding; t.anisotropy=8; iconCache[key]=t;
+  const t=new T.CanvasTexture(cv); t.encoding=T.sRGBEncoding; t.anisotropy=4; iconCache[key]=t;
   const img=new Image(); img.onload=()=>{ x.drawImage(img,40,40,176,176); t.needsUpdate=true; };
   img.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="176" height="176">${ICON[k]}</svg>`);
   return t;
@@ -116,11 +118,11 @@ function makeChef(opt){
   const feet=[-1,1].map(s=>{ const f=mesh(sph(.1),skin,s*.12,.05,.04); f.scale.set(1,.6,1.3); body.add(f); return f; });
   // 가운: 매끈한 종 모양 + 칠한 금색 칼라
   const prof=[[0,.09],[.3,.09],[.335,.11],[.345,.15],[.33,.24],[.3,.35],[.26,.45],[.21,.54],[.15,.6],[.07,.625],[0.0001,.63]].map(p=>new T.Vector2(p[0],p[1]));
-  body.add(mesh(G('gown',()=>{ const g=new T.LatheGeometry(prof,48); g.rotateY(Math.PI); return g; }),tmat(gownT,{roughness:.7})));
+  body.add(mesh(G('gown',()=>{ const g=new T.LatheGeometry(prof,32); g.rotateY(Math.PI); return g; }),tmat(gownT,{roughness:.7})));
   // 머리: 둥근 모서리 와플
   const head=new T.Group(); head.position.set(0,.86,0); body.add(head);
   const HR=.355, HD=.12, HB=.055;
-  const headGeo=G('head',()=>{ const s=new T.Shape(); s.absarc(0,0,HR,0,Math.PI*2,false); const g=new T.ExtrudeGeometry(s,{depth:HD,bevelEnabled:true,bevelThickness:HB,bevelSize:HB,bevelSegments:8,curveSegments:48}); g.translate(0,0,-HD/2);
+  const headGeo=G('head',()=>{ const s=new T.Shape(); s.absarc(0,0,HR,0,Math.PI*2,false); const g=new T.ExtrudeGeometry(s,{depth:HD,bevelEnabled:true,bevelThickness:HB,bevelSize:HB,bevelSegments:4,curveSegments:30}); g.translate(0,0,-HD/2);
     const uv=g.attributes.uv,p=g.attributes.position,R=HR+HB; for(let i=0;i<uv.count;i++) uv.setXY(i,(p.getX(i)+R)/(2*R),(p.getY(i)+R)/(2*R)); uv.needsUpdate=true; g.computeVertexNormals(); return g; });
   head.add(mesh(headGeo,[tmat(TEX.head,{roughness:.55}),mat(PAL.waffleEdge,{roughness:.55})]));
   // 얼굴
@@ -200,10 +202,10 @@ const strawSliceTex=canvasTex(256,256,(x,w)=>{ const k=w/.16, ox=w/2, oy=w*.47;
   x.strokeStyle='rgba(255,255,255,.7)'; x.lineWidth=3; for(let i=0;i<8;i++){ const a=i/8*Math.PI*2; x.beginPath(); x.moveTo(ox,oy-6); x.lineTo(ox+Math.cos(a)*w*.2,oy-6+Math.sin(a)*w*.26); x.stroke(); }
   x.fillStyle='#ffe08a'; for(let i=0;i<14;i++){ const a=i/14*Math.PI*2; x.beginPath(); x.ellipse(ox+Math.cos(a)*w*.34*(.95),oy+Math.sin(a)*w*.36*(.95)-4,3,4.5,a,0,7); x.fill(); }
 });
-function strawSlice(){ return G('strawslice',()=>{ const g=new T.ExtrudeGeometry(strawShape(),{depth:.012,bevelEnabled:true,bevelThickness:.01,bevelSize:.006,bevelSegments:3,curveSegments:16});
+function strawSlice(){ return G('strawslice',()=>{ const g=new T.ExtrudeGeometry(strawShape(),{depth:.012,bevelEnabled:true,bevelThickness:.01,bevelSize:.006,bevelSegments:2,curveSegments:10});
   const uv=g.attributes.uv,p=g.attributes.position; for(let i=0;i<uv.count;i++) uv.setXY(i,(p.getX(i)+.08)/.16,(p.getY(i)+.0752)/.16); uv.needsUpdate=true; g.rotateX(-Math.PI/2); g.computeVertexNormals(); return g; }); }
 const strawSliceMat=[tmat(strawSliceTex,{roughness:.4}),mat('#e8343a',{roughness:.4})];
-const halfSph=r=>G('hs'+r,()=>new T.SphereGeometry(r,20,10,0,Math.PI*2,0,Math.PI/2));
+const halfSph=r=>G('hs'+r,()=>new T.SphereGeometry(r,16,8,0,Math.PI*2,0,Math.PI/2));
 const wMats={};
 function waffleMesh(kind){
   kind=kind||'ok';
@@ -212,15 +214,15 @@ function waffleMesh(kind){
 }
 function addTopping(g,k,y){
   if(k==='cheese'){ const cg=G('cube',()=>rbox(.07,.07,.07,.015,.012)), cm=mat('#ffd34d',{roughness:.45}); [[-.12,.02,.3],[.13,-.02,-.2],[.02,-.15,.6],[-.05,.15,.1]].forEach(p=>{ const c=mesh(cg,cm,p[0],y+.035,p[1]); c.rotation.y=p[2]; g.add(c); }); }
-  if(k==='cream'){ const w=mat('#ffffff',{roughness:.4}); g.add(mesh(sph(.11),w,0,y+.04,0)); g.add(mesh(sph(.08),w,0,y+.12,0)); g.add(mesh(G('crtip',()=>new T.ConeGeometry(.055,.09,24)),w,0,y+.2,0)); g.add(mesh(sph(.035),mat(PAL.red,{roughness:.3}),0,y+.26,0)); }
+  if(k==='cream'){ const w=mat('#ffffff',{roughness:.4}); g.add(mesh(sph(.11),w,0,y+.04,0)); g.add(mesh(sph(.08),w,0,y+.12,0)); g.add(mesh(G('crtip',()=>new T.ConeGeometry(.055,.09,12)),w,0,y+.2,0)); g.add(mesh(sph(.035),mat(PAL.red,{roughness:.3}),0,y+.26,0)); }
   if(k==='syrup'){ g.add(mesh(G('syr',()=>{ const s=new T.Shape(); const N=60; for(let i=0;i<=N;i++){ const a=i/N*Math.PI*2, r=.185+Math.sin(a*6)*.025; i?s.lineTo(Math.cos(a)*r,Math.sin(a)*r):s.moveTo(Math.cos(a)*r,Math.sin(a)*r); } const ge=new T.ExtrudeGeometry(s,{depth:.006,bevelEnabled:true,bevelThickness:.006,bevelSize:.006,bevelSegments:2}); ge.rotateX(-Math.PI/2); return ge; }),mat('#e2841c',{roughness:.15}),0,y+.006,0,false)); }
-  if(k==='choco'){ const chip=G('chip2',()=>{ const c=new T.ConeGeometry(.03,.04,16); c.translate(0,.02,0); return c; }); [[-.15,-.06],[.1,-.16],[.17,.04],[-.08,.08],[.02,-.08],[-.17,-.17],[.08,.08],[-.02,.19]].forEach(p=>g.add(mesh(chip,mat('#3d2114',{roughness:.35}),p[0],y,p[1]))); }
+  if(k==='choco'){ const chip=G('chip2',()=>{ const c=new T.ConeGeometry(.03,.04,8); c.translate(0,.02,0); return c; }); [[-.15,-.06],[.1,-.16],[.17,.04],[-.08,.08],[.02,-.08],[-.17,-.17],[.08,.08],[-.02,.19]].forEach(p=>g.add(mesh(chip,mat('#3d2114',{roughness:.35}),p[0],y,p[1]))); }
   if(k==='strawberry'){ [[-.13,.12,.5],[.13,.12,-.5],[0,.155,0]].forEach(p=>{ const m=mesh(strawSlice(),strawSliceMat,p[0],y+.014,p[1]); m.rotation.y=p[2]+Math.PI; m.scale.setScalar(1.3); g.add(m); }); }
   if(k==='banana'){ [[-.14,-.13],[.14,-.13],[0,-.17]].forEach(p=>g.add(mesh(bananaSlice(),bananaSliceMat,p[0],y+.018,p[1]))); }
 }
 function plateMesh(n,dirty){
   const g=new T.Group();
-  const pg=G('plate',()=>{ const pts=[[0.0001,0],[.22,0],[.25,.012],[.27,.03],[.33,.045],[.345,.052],[.34,.058],[.3,.05],[.25,.04],[0.0001,.038]].map(p=>new T.Vector2(p[0],p[1])); return new T.LatheGeometry(pts,48); });
+  const pg=G('plate',()=>{ const pts=[[0.0001,0],[.22,0],[.25,.012],[.27,.03],[.33,.045],[.345,.052],[.34,.058],[.3,.05],[.25,.04],[0.0001,.038]].map(p=>new T.Vector2(p[0],p[1])); return new T.LatheGeometry(pts,32); });
   for(let i=0;i<n;i++){ const y=i*.05; g.add(mesh(pg,mat(dirty?'#d6d0c4':'#ffffff',{roughness:.3}),0,y,0));
     const ring=mesh(tor(.305,.008,6,48),mat(dirty?'#b7a88c':PAL.navyL,{roughness:.3}),0,y+.05,0,false); ring.rotation.x=Math.PI/2; g.add(ring); }
   if(dirty){ [[.1,.06,.045],[-.08,-.07,.035],[-.11,.09,.025]].forEach(p=>{ const d=new T.Mesh(circ(p[2],20),flat('#a88a5c',{transparent:true,opacity:.55})); d.scale.set(1.4,1,1); d.rotation.x=-Math.PI/2; d.position.set(p[0],(n-1)*.05+.041,p[1]); g.add(d); }); }
@@ -242,7 +244,7 @@ function cupMesh(n,dirty,food){
     const st=mesh(cyl(.012,.012,.3,10),mat('#e5484d'),.04,top+.38,-.02,false); st.rotation.z=-.3; g.add(st);
     if(food.includes('strawberry')){ const s=mesh(strawSlice(),strawSliceMat,-.05,top+.33,.03,false); s.rotation.x=-1.1; s.scale.setScalar(1.2); g.add(s); }
     if(food.includes('banana')){ const b=mesh(bananaSlice(),bananaSliceMat,.05,top+.33,.05,false); b.rotation.x=-.9; g.add(b); }
-    if(food.includes('choco')){ const chip=G('chip2',()=>{ const c=new T.ConeGeometry(.03,.04,16); c.translate(0,.02,0); return c; }); [[-.02,.0],[.03,.04],[0,-.04]].forEach(p=>g.add(mesh(chip,mat('#3d2114'),p[0],top+.345,p[1],false))); }
+    if(food.includes('choco')){ const chip=G('chip2',()=>{ const c=new T.ConeGeometry(.03,.04,8); c.translate(0,.02,0); return c; }); [[-.02,.0],[.03,.04],[0,-.04]].forEach(p=>g.add(mesh(chip,mat('#3d2114'),p[0],top+.345,p[1],false))); }
   }
   return g;
 }
@@ -260,11 +262,11 @@ function strawBodyGeo(){ return G('straw2',()=>{ const g=new T.LatheGeometry(STR
   for(let i=0;i<p.count;i++){ const y=p.getY(i); if(y>.09) c.copy(mid).lerp(top,Math.min(1,(y-.09)/.04)*.6); else if(y<-.06) c.copy(mid).lerp(tip,Math.min(1,(-.06-y)/.09)); else c.copy(mid); cols.push(c.r,c.g,c.b); }
   g.setAttribute('color',new T.Float32BufferAttribute(cols,3)); g.computeVertexNormals(); return g; }); }
 function leafGeo(){ return G('sleaf',()=>{ const s=new T.Shape(); s.moveTo(0,0); s.quadraticCurveTo(.045,.06,.115,0); s.quadraticCurveTo(.045,-.06,0,0);
-  const g=new T.ExtrudeGeometry(s,{depth:.004,bevelEnabled:true,bevelThickness:.003,bevelSize:.003,bevelSegments:2,curveSegments:10}); g.rotateX(-Math.PI/2); return g; }); }
+  const g=new T.ExtrudeGeometry(s,{depth:.004,bevelEnabled:true,bevelThickness:.003,bevelSize:.003,bevelSegments:1,curveSegments:6}); g.rotateX(-Math.PI/2); return g; }); }
 function strawberryWhole(){
   const g=new T.Group(), body=new T.Group(); body.position.y=.15; g.add(body);
   body.add(mesh(strawBodyGeo(),mat('#ffffff',{vertexColors:true,roughness:.32})));
-  const seedG=G('seed',()=>{ const s=new T.SphereGeometry(.009,10,8); s.scale(1,1.7,.6); return s; }), seedM=mat('#ffe27a',{roughness:.3});
+  const seedG=G('seed',()=>{ const s=new T.SphereGeometry(.009,5,4); s.scale(1,1.7,.6); return s; }), seedM=mat('#ffe27a',{roughness:.3});
   const rows=[[.06,-.1],[.1,-.055],[.13,-.01],[.145,.035],[.138,.075]];
   rows.forEach(([r0,y],ri)=>{ const n=Math.round(r0*90); for(let k=0;k<n;k++){ const a=(k+(ri%2)*.5)/n*Math.PI*2;
     // 가장 가까운 프로파일에서 반지름 찾기
@@ -320,7 +322,7 @@ function itemMesh(it){
   const g=new T.Group(); if(!it) return g;
   switch(it.k){
     case 'batter':{
-      const bowl=G('bowl',()=>{ const pts=[[0.0001,0],[.12,0],[.15,.01],[.2,.07],[.225,.15],[.23,.17],[.215,.17],[.2,.12],[0.0001,.12]].map(p=>new T.Vector2(p[0],p[1])); return new T.LatheGeometry(pts,40); });
+      const bowl=G('bowl',()=>{ const pts=[[0.0001,0],[.12,0],[.15,.01],[.2,.07],[.225,.15],[.23,.17],[.215,.17],[.2,.12],[0.0001,.12]].map(p=>new T.Vector2(p[0],p[1])); return new T.LatheGeometry(pts,28); });
       g.add(mesh(bowl,mat('#5c8fe0',{roughness:.35})));
       g.add(mesh(cyl(.205,.205,.012,40),mat(it.choco?'#6e4027':'#ffe3a6',{roughness:.3}),0,.15,0,false));
       const wh=new T.Group(); wh.position.set(.06,.16,0); wh.rotation.z=-.45; g.add(wh);
@@ -341,8 +343,8 @@ function itemMesh(it){
       break;
     case 'choco': {
       if(!it.cut){ const bars=it.pile?[[-.04,-.08,.15],[.03,.1,-.2]]:[[0,0,.1]]; bars.forEach(p=>{ const b=chocoBar(); b.position.set(p[0],0,p[1]); b.rotation.y=p[2]; g.add(b); }); }
-      else { const mound=mesh(G('mound2',()=>new T.SphereGeometry(.17,32,12,0,Math.PI*2,0,Math.PI/2)),mat('#5a3320',{roughness:.5}),0,0,0); mound.scale.y=.4; g.add(mound);
-        const chip=G('chip2',()=>{ const c=new T.ConeGeometry(.03,.04,16); c.translate(0,.02,0); return c; }), cm=mat('#3d2114',{roughness:.35});
+      else { const mound=mesh(G('mound2',()=>new T.SphereGeometry(.17,20,8,0,Math.PI*2,0,Math.PI/2)),mat('#5a3320',{roughness:.5}),0,0,0); mound.scale.y=.4; g.add(mound);
+        const chip=G('chip2',()=>{ const c=new T.ConeGeometry(.03,.04,8); c.translate(0,.02,0); return c; }), cm=mat('#3d2114',{roughness:.35});
         for(let i=0;i<14;i++){ const a=i*2.39, r=.03+((i*37)%10)/10*.12; const yy=Math.sqrt(Math.max(0,1-(r/.17)**2))*.17*.4-.012; const c=mesh(chip,cm,Math.cos(a)*r,yy,Math.sin(a)*r); c.rotation.set(((i*13)%7-3)*.05,a,((i*17)%7-3)*.05); g.add(c); } }
     } break;
     case 'strawberry':
@@ -456,7 +458,7 @@ function makeStation(type,opt){
       const beater=new T.Group(); beater.position.set(0,-.08,.42); head.add(beater);
       beater.add(mesh(cyl(.012,.012,.16,10),steel,0,-.08,0));
       for(let i=0;i<3;i++){ const l=mesh(tor(.045,.007,6,20),steel,0,-.2,0); l.rotation.y=i*Math.PI/3; l.scale.y=1.6; beater.add(l); }
-      const bowl=G('mbowl',()=>{ const pts=[[0.0001,0],[.09,0],[.12,.015],[.165,.08],[.18,.17],[.185,.2],[.172,.2],[.16,.14],[0.0001,.14]].map(p=>new T.Vector2(p[0],p[1])); return new T.LatheGeometry(pts,40); });
+      const bowl=G('mbowl',()=>{ const pts=[[0.0001,0],[.09,0],[.12,.015],[.165,.08],[.18,.17],[.185,.2],[.172,.2],[.16,.14],[0.0001,.14]].map(p=>new T.Vector2(p[0],p[1])); return new T.LatheGeometry(pts,28); });
       mx.add(mesh(bowl,steel,0,.08,.2));
       const fill=new T.Group(); fill.position.set(0,.08+.15,.2); mx.add(fill);
       parts.beater=beater; parts.head=head; parts.mixer=mx; parts.fill=fill; break; }
@@ -494,7 +496,7 @@ function setMixer(st,contents,done,mixing,dt,t){
   if(st._msig!==sig){ st._msig=sig; const f=st.parts.fill; f.clear();
     if(done) { f.add(mesh(cyl(.165,.165,.02,40),mat('#6e4027',{roughness:.25}),0,0,0,false)); f.add(mesh(sph(.06,20),mat('#7a4a2e',{roughness:.25}),0,0,0,false)).children; }
     else { if(contents.includes('batter')) f.add(mesh(cyl(.155,.155,.02,40),mat('#ffe3a6',{roughness:.3}),0,-.01,0,false));
-      if(contents.includes('choco')){ const chip=G('chip2',()=>{ const c=new T.ConeGeometry(.03,.04,16); c.translate(0,.02,0); return c; }); for(let i=0;i<8;i++){ const a=i*2.39,r=.03+(i%4)*.03; f.add(mesh(chip,mat('#3d2114',{roughness:.35}),Math.cos(a)*r,-.005,Math.sin(a)*r,false)); } } } }
+      if(contents.includes('choco')){ const chip=G('chip2',()=>{ const c=new T.ConeGeometry(.03,.04,8); c.translate(0,.02,0); return c; }); for(let i=0;i<8;i++){ const a=i*2.39,r=.03+(i%4)*.03; f.add(mesh(chip,mat('#3d2114',{roughness:.35}),Math.cos(a)*r,-.005,Math.sin(a)*r,false)); } } } }
   if(mixing){ st.parts.beater.rotation.y+=dt*24; st.parts.mixer.rotation.z=Math.sin(t*40)*.012; st.parts.head.rotation.x=0; }
   else { st.parts.mixer.rotation.z=0; st.parts.head.rotation.x+=((contents.length?0:-.45)-st.parts.head.rotation.x)*.15; }
 }
@@ -506,7 +508,7 @@ function setBlender(st,contents,done,blending,dt,t){
       if(contents.includes('milk')){ const c=mesh(G('bfill',()=>new T.CylinderGeometry(.148,.118,1,28)),mat('#f7f2e6'),0,y+.09,0,false); c.scale.y=.18; c.scale.x=c.scale.z=.9; f.add(c); y+=.18; }
       if(contents.includes('strawberry')) [[-.04,.02],[.05,-.03]].forEach(p=>{ const s=mesh(strawSlice(),strawSliceMat,p[0],y+.01,p[1],false); s.scale.setScalar(1.3); f.add(s); });
       if(contents.includes('banana')) [[.03,.04],[-.05,-.02]].forEach(p=>f.add(mesh(bananaSlice(),bananaSliceMat,p[0],y+.02,p[1],false)));
-      if(contents.includes('choco')){ const chip=G('chip2',()=>{ const c=new T.ConeGeometry(.03,.04,16); c.translate(0,.02,0); return c; }); [[0,0],[.05,.04],[-.04,.05],[.02,-.05]].forEach(p=>f.add(mesh(chip,mat('#3d2114'),p[0],y,p[1],false))); }
+      if(contents.includes('choco')){ const chip=G('chip2',()=>{ const c=new T.ConeGeometry(.03,.04,8); c.translate(0,.02,0); return c; }); [[0,0],[.05,.04],[-.04,.05],[.02,-.05]].forEach(p=>f.add(mesh(chip,mat('#3d2114'),p[0],y,p[1],false))); }
     } }
   if(blending){ st.parts.blender.rotation.z=Math.sin(t*46)*.014; st.parts.fill.rotation.y+=dt*18; } else { st.parts.blender.rotation.z=0; }
 }
@@ -521,7 +523,7 @@ function makeFloor(w,h){
   const m=new T.Mesh(new T.PlaneGeometry(w,h).rotateX(-Math.PI/2),tmat(tex,{roughness:.8})); m.receiveShadow=true; return m;
 }
 /* 조명: 거의 위에서 비추는 부드러운 빛, 짧고 또렷한 그림자 */
-function setupRenderer(r){ r.outputEncoding=T.sRGBEncoding; r.shadowMap.enabled=true; r.shadowMap.type=T.PCFSoftShadowMap; }
+function setupRenderer(r){ r.outputEncoding=T.sRGBEncoding; r.shadowMap.enabled=true; r.shadowMap.type=T.PCFShadowMap; }
 function setupLights(scene,c,size,span){
   scene.add(new T.HemisphereLight(lin('#fff8ec'),lin('#c9ad86'),.9));
   const d=new T.DirectionalLight(lin('#fff6ea'),.6); d.position.set(c.x-2.2,c.y+11,c.z+4.5); d.target.position.copy(c); scene.add(d,d.target);
@@ -572,5 +574,13 @@ function bake(root){
   return {made,removed};
 }
 
-window.WK={setBlender,cupMesh,beltTex,bake,T,PAL,lin,mat,toon:mat,flat,mesh,rbox,cyl,sph,circ,makeChef,makeStation,setMachine,setMixer,itemMesh,plateMesh,waffleMesh,makeFloor,setupRenderer,setupLights,ICON,TEX};
+/* 가볍게 모드: 무광 스탠다드 재질을 훨씬 가벼운 램버트 재질로 바꿔 끼워요 (되돌릴 수 있어요) */
+const lowC=new WeakMap();
+function lowOf(m){ if(!m||!m.isMeshStandardMaterial) return m; let l=lowC.get(m);
+  if(!l){ l=new T.MeshLambertMaterial({color:m.color,map:m.map,emissive:m.emissive,emissiveMap:m.emissiveMap,emissiveIntensity:m.emissiveIntensity,transparent:m.transparent,opacity:m.opacity,side:m.side,vertexColors:m.vertexColors,depthWrite:m.depthWrite,depthTest:m.depthTest,alphaTest:m.alphaTest,polygonOffset:m.polygonOffset,polygonOffsetFactor:m.polygonOffsetFactor,polygonOffsetUnits:m.polygonOffsetUnits,visible:m.visible});
+    l.userData.hi=m; lowC.set(m,l); }
+  return l; }
+const hiOf=m=>m&&m.userData&&m.userData.hi||m;
+function setLowMat(root,on){ const f=on?lowOf:hiOf; root.traverse(o=>{ if(!o.isMesh||!o.material) return; o.material=Array.isArray(o.material)?o.material.map(f):f(o.material); }); }
+window.WK={setLowMat,setBlender,cupMesh,beltTex,bake,T,PAL,lin,mat,toon:mat,flat,mesh,rbox,cyl,sph,circ,makeChef,makeStation,setMachine,setMixer,itemMesh,plateMesh,waffleMesh,makeFloor,setupRenderer,setupLights,ICON,TEX};
 })();
