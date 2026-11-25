@@ -2129,16 +2129,16 @@ function updBubbles(){
     else if(s.type==='sink'){ if(s.prog>0&&(s.count>0||s.cups>0)) bar=s.prog; }
     else if(s.type==='blender'){ if(s.blT>=BLEND){ ic='✓'; icc='ok'; } else if(s.bl.includes('milk')) bar=s.blT/BLEND; }
     else if(s.type==='mixer'){ if(s.mixT>=MIX){ ic='✓'; icc='ok'; } else if(s.mix.length===2) bar=s.mixT/MIX; }
-    const show=ic||bar!==null; b.el.hidden=!show; if(!show) return;
+    const show=!!(ic||bar!==null); if(b._sh!==show){ b._sh=show; b.el.hidden=!show; } if(!show) return;
     // 기본은 기구 위, 위쪽 주문표에 가리거나 화면 밖이면 기구 앞(아래)으로 내려요
     const h=(ic?32:0)+(bar!==null?13:0)+(ic&&bar!==null?3:0), w=48;
     let [x,y]=toScreen(s.x,s.type==='machine'?1.45:1.3,s.y), top=y-h;
     const hit=t=>t<6||hudRects.some(r=>x+w/2>r.left-4&&x-w/2<r.right+4&&t<r.bottom+4&&t+h>r.top-4);
     if(hit(top)){ const [x2,y2]=toScreen(s.x,.15,s.y+.62); x=x2; top=y2+2; if(hit(top)) top=Math.max(top,...hudRects.filter(r=>x+w/2>r.left&&x-w/2<r.right).map(r=>r.bottom+6)); }
     x=Math.max(w/2+4,Math.min(innerWidth-w/2-4,x)); top=Math.min(innerHeight-h-4,top);
-    b.el.style.transform=`translate(${x.toFixed(1)}px,${top.toFixed(1)}px) translateX(-50%)`;
-    b.ic.hidden=!ic; if(ic){ b.ic.textContent=ic; b.ic.className='ic '+icc; }
-    b.bar.hidden=bar===null; if(bar!==null){ b.fill.style.width=Math.min(100,bar*100)+'%'; b.fill.style.background=barC; }
+    const tr=`translate(${x.toFixed(0)}px,${top.toFixed(0)}px) translateX(-50%)`; if(b._tr!==tr){ b._tr=tr; b.el.style.transform=tr; }
+    const ik=ic?ic+icc:''; if(b._ik!==ik){ b._ik=ik; b.ic.hidden=!ic; if(ic){ b.ic.textContent=ic; b.ic.className='ic '+icc; } }
+    const bk=bar===null?'':Math.round(Math.min(100,bar*100))+barC; if(b._bk!==bk){ b._bk=bk; b.bar.hidden=bar===null; if(bar!==null){ b.fill.style.width=Math.min(100,Math.round(bar*100))+'%'; b.fill.style.background=barC; } }
   });
 }
 const hintEl=document.getElementById('hint'), hintT=document.getElementById('hintT');
@@ -2169,7 +2169,7 @@ function render(t,dt){
     let anim=p.anim; if(p.cheerT>0){ p.cheerT-=dt; anim='cheer'; }
     p.chef.state.carry=!!p.hold; p.chef.setAnim(anim);
     p.chef.root.position.set(p.x,0,p.z); p.chef.faceDir(p.fx,p.fz,dt); p.chef.update(dt);
-    if(p.tag&&!p.tag.hidden){ const [x,y]=toScreen(p.x,2.05,p.z); p.tag.style.left=x+'px'; p.tag.style.top=y+'px'; }
+    if(p.tag&&!p.tag.hidden){ const [x,y]=toScreen(p.x,2.05,p.z); const tr=`translate(${x.toFixed(0)}px,${y.toFixed(0)}px)`; if(p.tag._tr!==tr){ p.tag._tr=tr; p.tag.style.left='0px'; p.tag.style.top='0px'; p.tag.style.transform=tr+' translate(-50%,-100%)'; } }
   });
   const target=L().target;
   stations.forEach(s=>{ if(s.type==='machine') WK.setMachine(s,machineState(s),t/1000);
@@ -2311,8 +2311,11 @@ function snap(cap){
     if(s.item) d.it=s.item; if(s.count) d.c=s.count; if(s.prog) d.p=s.prog; if(s.cook) d.k=[s.cook.t,s.cook.choco?1:0]; if(s.working) d.w=1;
     if(s.mix&&s.mix.length) d.m=s.mix.map(k=>k==='choco'?1:0); if(s.mixT) d.mt=s.mixT; if(s.type==='belt'&&s.item) d.b=s.bt; if(s.cup) d.cu=s.cup; if(s.cups) d.cc=s.cups; if(s.bl&&s.bl.length) d.x=s.bl; if(s.blT) d.xt=s.blT;
     if(Object.keys(d).length){ d.i=i; st.push(d); } });
+  // 기구 상태는 바뀌었을 때와 1초마다 한 번(맞추기용)만 실어요
+  const sj=JSON.stringify(st), now=performance.now(), sendS=sj!==NET.lastS||now-NET.keyT>1000;
+  if(sendS){ NET.lastS=sj; NET.keyT=now; }
   const g={st:state,tm:time,sc:score,cb:combo,sv:[stats.served,stats.failed,stats.burnt],
-    o:orders.map(o=>[RECIPES.indexOf(o.r),o.t,o.max,o.id]),s:st,h:players.map(p=>p.hold),
+    o:orders.map(o=>[RECIPES.indexOf(o.r),o.t,o.max,o.id]),s:sendS?st:undefined,h:players.map(p=>p.hold),
     ps:players.map(p=>[p.x,p.z,p.fx,p.fz,p.anim]),ac:players.map(p=>p.active?1:0),ev:evs,ak:NET.lastSeq.slice(1),sw:SW.rules.map(r=>[r.n,r.acc]),
     fl:floorItems.map(f=>[f.id,f.x,f.z,f.it]),fy:flyers.map(f=>[f.id,f.x,f.z,f.y,f.vx,f.vz,f.vy,f.it])};
   let txt=JSON.stringify(g,(k,v)=>typeof v==='number'?r2(v):v);
@@ -2336,7 +2339,7 @@ function applySnap(g){
   const waiting=NET.predSeq>ak&&performance.now()-NET.predAt<1500;
   if(!waiting){
   const byI={}; (Array.isArray(g.s)?g.s:[]).forEach(d=>{ if(d&&typeof d==='object') byI[d.i|0]=d; });
-  stations.forEach((s,i)=>{ if(s.type==='crate'||s.type==='trash') return; const d=byI[i]||{};
+  if(Array.isArray(g.s)) stations.forEach((s,i)=>{ if(s.type==='crate'||s.type==='trash') return; const d=byI[i]||{};
     s.item=cleanItem(d.it); s.count=Math.max(0,Math.min(20,num(d.c)|0)); s.prog=num(d.p); s.working=!!d.w;
     s.cook=Array.isArray(d.k)?{t:num(d.k[0]),choco:!!d.k[1]}:null;
     if(s.type==='mixer'){ s.mix=(Array.isArray(d.m)?d.m:[]).slice(0,2).map(x=>x?'choco':'batter'); s.mixT=num(d.mt); }
@@ -2382,11 +2385,19 @@ function makeP2P(){
     const snapshot=()=>{ const a=[]; if(myId) a.push({peer:myId,isMe:true,sameTab:true,kind:'viewer',guest:false,presence:pres}); members.forEach((m,id)=>a.push({peer:id,isMe:false,sameTab:false,kind:'viewer',guest:false,presence:m.presence})); return a; };
     const notify=()=>{ snap=snapshot(); if(nq) return; nq=true; setTimeout(()=>{ nq=false; subs.slice().forEach(f=>{ try{ f({peers:snap}); }catch(e){} }); },0); };
     const send=(c,m)=>{ try{ if(c&&c.open) c.send(m); }catch(e){} };
-    const upd=(id,p)=>{ if(closed) return; const m=members.get(id)||{}; m.presence=Object.freeze(p&&typeof p==='object'&&!Array.isArray(p)?p:{}); m.seen=performance.now(); members.set(id,m); notify(); };
+    const isObj=p=>p&&typeof p==='object'&&!Array.isArray(p);
+    const upd=(id,p)=>{ if(closed) return; const m=members.get(id)||{}; m.presence=Object.freeze(isObj(p)?p:{}); m.seen=performance.now(); members.set(id,m); notify(); };
+    // 바뀐 칸만 받아서 합쳐요 (null = 지우기)
+    const merge=(id,d)=>{ if(closed||!isObj(d)) return null; const m=members.get(id)||{presence:{}}; const n={...m.presence}; for(const k in d){ if(d[k]===null) delete n[k]; else n[k]=d[k]; } upd(id,n); return d; };
+    const touch=id=>{ const m=members.get(id); if(m) m.seen=performance.now(); };
+    const enc=m=>JSON.stringify(m), dec=x=>{ if(typeof x!=='string') return x; try{ return JSON.parse(x); }catch(e){ return null; } };
     const drop=id=>{ if(members.delete(id)) notify(); };
     const api={
-      async presence(patch){ const n={...pres}; for(const k in patch){ if(patch[k]===null) delete n[k]; else n[k]=patch[k]; } pres=Object.freeze(n); snap=snapshot();
-        if(hub){ const msg={t:'u',id:myId,p:pres}; conns.forEach(c=>send(c,msg)); } else send(hubConn,{t:'p',p:pres}); },
+      async presence(patch){ const n={...pres}, d={}; let any=false;
+        for(const k in patch){ if(patch[k]===null){ if(k in n){ delete n[k]; d[k]=null; any=true; } } else if(n[k]!==patch[k]||typeof patch[k]==='object'){ n[k]=patch[k]; d[k]=patch[k]; any=true; } }   // 배열·객체는 안에서 바뀔 수 있어서 늘 보내요
+        pres=Object.freeze(n); snap=snapshot();
+        const msg=enc(hub?{t:'d',id:myId,d:any?d:{}}:{t:'d',d:any?d:{}});      // 바뀐 게 없어도 살아 있다는 신호로 빈 묶음을 보내요
+        if(hub) conns.forEach(c=>send(c,msg)); else send(hubConn,msg); },
       peers(){ return snap; },
       onPeers(f){ subs.push(f); setTimeout(()=>{ try{ f({peers:snap}); }catch(e){} },0); return ()=>{ const i=subs.indexOf(f); if(i>=0) subs.splice(i,1); }; },
       connected(){ return open&&!closed&&(hub?!peer.disconnected||conns.size>0:!!(hubConn&&hubConn.open)); },
@@ -2395,25 +2406,30 @@ function makeP2P(){
     };
     // 한동안 소식이 없으면 나간 것으로 봐요 (탭을 갑자기 닫은 경우)
     const beat=setInterval(()=>{ const now=performance.now(); members.forEach((m,id)=>{ if(now-m.seen<8000) return; drop(id);
-      if(hub){ const c=conns.get(id); conns.delete(id); try{ c&&c.close(); }catch(e){} conns.forEach(c2=>send(c2,{t:'x',id})); } }); },1000);
+      if(hub){ const c=conns.get(id); conns.delete(id); try{ c&&c.close(); }catch(e){} const j=enc({t:'x',id}); conns.forEach(c2=>send(c2,j)); } }); },1000);
     const to=setTimeout(()=>fail({code:'timeout'}),12000);
     const fail=e=>{ if(done) return; done=true; clearTimeout(to); clearInterval(beat); try{ peer&&peer.destroy(); }catch(_){} rej(e); };
     const ok=()=>{ if(done) return; done=true; clearTimeout(to); open=true; snap=snapshot(); res(api); };
     try{ peer=hub?new Peer(PFX+name,opt):new Peer(opt); }catch(e){ fail({code:'network'}); return; }
     peer.on('open',id=>{ myId=id; snap=snapshot();
       if(hub){ ok(); return; }
-      const c=peer.connect(PFX+name,{reliable:true}); hubConn=c;
-      c.on('open',()=>{ send(c,{t:'p',p:pres}); ok(); });
-      c.on('data',m=>{ if(!m||typeof m!=='object') return;
-        if(m.t==='u'&&typeof m.id==='string'&&m.id!==myId) upd(m.id,m.p); else if(m.t==='x'&&typeof m.id==='string') drop(m.id); });
+      const c=peer.connect(PFX+name,{reliable:true,serialization:'raw'}); hubConn=c;
+      c.on('open',()=>{ send(c,enc({t:'u',p:pres})); ok(); });
+      c.on('data',x=>{ const m=dec(x); if(!m||typeof m!=='object'||typeof m.id!=='string'||m.id===myId) return;
+        if(m.t==='u') upd(m.id,m.p); else if(m.t==='d'){ if(members.has(m.id)) merge(m.id,m.d); } else if(m.t==='x') drop(m.id); });
       c.on('close',()=>{ members.clear(); notify(); });
     });
     if(hub) peer.on('connection',c=>{
       c.on('open',()=>{ if(closed){ try{ c.close(); }catch(e){} return; } conns.set(c.peer,c); upd(c.peer,{});
         // 새로 온 사람에게 지금 방에 있는 모두를 알려 줘요
-        send(c,{t:'u',id:myId,p:pres}); members.forEach((m,id)=>{ if(id!==c.peer) send(c,{t:'u',id,p:m.presence}); }); });
-      c.on('data',m=>{ if(!m||m.t!=='p') return; upd(c.peer,m.p); const msg={t:'u',id:c.peer,p:members.get(c.peer).presence}; conns.forEach((c2,id)=>{ if(id!==c.peer) send(c2,msg); }); });
-      c.on('close',()=>{ conns.delete(c.peer); drop(c.peer); conns.forEach(c2=>send(c2,{t:'x',id:c.peer})); });
+        send(c,enc({t:'u',id:myId,p:pres})); members.forEach((m,id)=>{ if(id!==c.peer) send(c,enc({t:'u',id,p:m.presence})); });
+        const j=enc({t:'u',id:c.peer,p:{}}); conns.forEach((c2,id)=>{ if(id!==c.peer) send(c2,j); }); });
+      c.on('data',x=>{ const m=dec(x); if(!m||typeof m!=='object') return;
+        let msg=null;
+        if(m.t==='u'){ upd(c.peer,m.p); msg=enc({t:'u',id:c.peer,p:members.get(c.peer).presence}); }
+        else if(m.t==='d'){ const d=merge(c.peer,m.d); if(!d) return; if(!Object.keys(d).length){ touch(c.peer); return; } msg=enc({t:'d',id:c.peer,d}); }
+        if(msg) conns.forEach((c2,id)=>{ if(id!==c.peer) send(c2,msg); }); });
+      c.on('close',()=>{ conns.delete(c.peer); drop(c.peer); const j=enc({t:'x',id:c.peer}); conns.forEach(c2=>send(c2,j)); });
     });
     peer.on('error',e=>{ const t=e&&e.type; if(done) return;
       if(t==='peer-unavailable'){ ok(); return; }        // 그 코드의 방이 없으면 빈 방으로 돌려줘요 (아래에서 '방을 찾을 수 없어요')
@@ -2424,7 +2440,7 @@ function makeP2P(){
 }
 
 const NET={
-  mode:'solo', api:null, user:null, room:null, code:'', seq:0, predSeq:0, predAt:0, acts:[], lastSeq:[0,0,0,0], slots:[null,null,null], slotSeen:[null,null,null], slotKey:'', myId:null,
+  mode:'solo', api:null, user:null, room:null, lastS:'', keyT:0, code:'', seq:0, predSeq:0, predAt:0, acts:[], lastSeq:[0,0,0,0], slots:[null,null,null], slotSeen:[null,null,null], slotKey:'', myId:null,
   pushT:0, idleT:0, sendT:0, lastG:null, lastEv:-1, hostGone:0, offT:0,
   findPeer(role){ if(!this.room) return null; try{ return this.room.peers().find(p=>!p.sameTab&&p.presence&&p.presence.role===role)||null; }catch(e){ return null; } },
   guests(){ if(!this.room) return []; try{ return this.room.peers().filter(p=>!p.sameTab&&p.presence&&p.presence.role==='guest'); }catch(e){ return []; } },
@@ -2499,7 +2515,7 @@ const NET={
     let code=''; for(let i=0;i<4;i++) code+=CODE_CH[Math.floor(Math.random()*CODE_CH.length)];
     try{
       const r=await (this.p2p?this.api.join('waffle-'+code.toLowerCase(),{hub:true}):this.api.join('waffle-'+code.toLowerCase()));
-      this.room=r; this.code=code; this.mode='host'; me=0; this.lastSeq=[0,0,0,0]; this.slots=[null,null,null]; this.slotSeen=[null,null,null]; this.slotKey=''; evs=[];
+      this.room=r; this.code=code; this.mode='host'; me=0; this.lastS=''; this.keyT=0; this.lastSeq=[0,0,0,0]; this.slots=[null,null,null]; this.slotSeen=[null,null,null]; this.slotKey=''; evs=[];
       await r.presence({role:'host',mp:curMap.grid,mn:curMap.name.slice(0,20)});
       r.onPeers(()=>this.onPeers(),e=>this.lost(e));
       this.api.presence({open:code,full:0}).catch(()=>{});
