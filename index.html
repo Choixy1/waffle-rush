@@ -429,6 +429,7 @@ kbd{font-family:var(--font)!important;font-weight:900;letter-spacing:.5px}
 </div>
 
 <script src="peerjs.min.js"></script>
+<script>window.WAFFLE_SHARED={"url": "https://htvwbnlfirfnvljovzej.supabase.co", "key": "sb_publishable_y3FZPd7K93PnGNzsxxjtpg_yRkYlNHM"};</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 /* 와플 대소동 공용 3D 모델: 캐릭터, 주방 기구, 재료 (2차: 매끈한 마감) */
@@ -2751,7 +2752,7 @@ const MAPS={
   secret(){ try{ let k=localStorage.getItem('waffle-rush-secret-v1'); if(!k||k.length<16){ k=Array.from(crypto.getRandomValues(new Uint8Array(18)),b=>b.toString(16).padStart(2,'0')).join(''); localStorage.setItem('waffle-rush-secret-v1',k); } return k; }catch(e){ return null; } },
   upIds(){ try{ const v=JSON.parse(localStorage.getItem('waffle-rush-up-v1')||'[]'); return Array.isArray(v)?v.map(String):[]; }catch(e){ return []; } },
   setUp(id,on){ try{ const v=this.upIds().filter(x=>x!==id); if(on) v.unshift(id); localStorage.setItem('waffle-rush-up-v1',JSON.stringify(v.slice(0,300))); }catch(e){} },
-  async sbCall(path,body){ const c=this.sb, h={apikey:c.key,Authorization:'Bearer '+c.key};
+  async sbCall(path,body){ const c=this.sb, h={apikey:c.key}; if(/^eyJ/.test(c.key)) h.Authorization='Bearer '+c.key;   // 새 publishable 키(sb_publishable_)는 apikey 헤더로만 보내요
     if(body) h['Content-Type']='application/json';
     const r=await fetch(c.url+path,body?{method:'POST',headers:h,body:JSON.stringify(body)}:{headers:h});
     if(!r.ok){ let m=''; try{ m=(await r.json()).message||''; }catch(e){} throw {sb:m||String(r.status)}; }
