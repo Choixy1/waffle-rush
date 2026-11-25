@@ -2471,12 +2471,31 @@ function makeP2P(){
     {urls:['turn:eu-0.turn.peerjs.com:3478','turn:us-0.turn.peerjs.com:3478','turn:eu-0.turn.peerjs.com:3478?transport=tcp','turn:us-0.turn.peerjs.com:3478?transport=tcp'],username:'peerjs',credential:'peerjsp'}];
   const opt=Object.assign({debug:0,config:{iceServers:ICE}},window.WAFFLE_PEER||{}), PFX='waffle-rush-v1-';
   let status=()=>{};
+  // 학교·회사 와이파이처럼 직접 연결이 막힌 곳: Supabase 실시간 채널(웹 443 포트)로 메시지를 중계해요
+  const W=window.WAFFLE_SHARED, RELAY=!!(W&&W.url&&W.key);
+  let SBP=null;
+  const sbClient=()=>SBP||(SBP=new Promise((res,rej)=>{ const go=()=>{ try{ res(window.supabase.createClient(W.url,W.key,{auth:{persistSession:false,autoRefreshToken:false},realtime:{params:{eventsPerSecond:60}}})); }catch(e){ rej(e); } };
+    if(window.supabase&&window.supabase.createClient) return go();
+    const s=document.createElement('script'); s.src=W.lib||'supabase.min.js'; s.onload=go; s.onerror=()=>{ SBP=null; rej(new Error('lib')); }; document.head.appendChild(s); }));
+  // 채널 하나에 들어가요 (들어가면 resolve)
+  const sbJoin=(sb,topic,onMsg)=>new Promise((res,rej)=>{ let fin=false; const ch=sb.channel(topic,{config:{broadcast:{self:false,ack:false}}});
+    ch.on('broadcast',{event:'m'},e=>{ try{ onMsg(e&&e.payload||{}); }catch(_){} });
+    const t=setTimeout(()=>{ if(!fin){ fin=true; try{ sb.removeChannel(ch); }catch(_){} rej(new Error('timeout')); } },9000);
+    ch.subscribe(st=>{ if(fin) return; if(st==='SUBSCRIBED'){ fin=true; clearTimeout(t); res(ch); } else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'||st==='CLOSED'){ fin=true; clearTimeout(t); try{ sb.removeChannel(ch); }catch(_){} rej(new Error(st)); } }); });
+  // PeerJS 연결처럼 쓰는 가짜 연결
+  const vconn=(id,sendFn,closeFn)=>{ const h={}; const c={peer:id,open:true,relay:true,
+    send:x=>{ if(c.open) sendFn(x); }, close(){ if(!c.open) return; c.open=false; try{ closeFn&&closeFn(); }catch(_){} (h.close||[]).forEach(f=>{ try{ f(); }catch(_){} }); },
+    on(ev,f){ (h[ev]=h[ev]||[]).push(f); }, emit(ev,a){ (h[ev]||[]).forEach(f=>{ try{ f(a); }catch(_){} }); } }; return c; };
   function room(name,hub){ return new Promise((res,rej)=>{
+    const TOPIC='wr1-'+name; let sb=null, hubCh=null, myCh=null, viaRelay=false; const gChs=new Map();
     const subs=[], members=new Map(), conns=new Map();
     let pres=Object.freeze({}), peer=null, myId=null, hubConn=null, open=false, closed=false, done=false, snap=[], nq=false;
     const snapshot=()=>{ const a=[]; if(myId) a.push({peer:myId,isMe:true,sameTab:true,kind:'viewer',guest:false,presence:pres}); members.forEach((m,id)=>a.push({peer:id,isMe:false,sameTab:false,kind:'viewer',guest:false,presence:m.presence})); return a; };
     const notify=()=>{ snap=snapshot(); if(nq) return; nq=true; setTimeout(()=>{ nq=false; subs.slice().forEach(f=>{ try{ f({peers:snap}); }catch(e){} }); },0); };
     const send=(c,m)=>{ try{ if(c&&c.open) c.send(m); }catch(e){} };
+    // 방장 → 중계 친구들: 0.1초 동안 보낼 메시지를 모아서 한 번에 보내요 (같은 메시지는 받는 사람만 모아요)
+    let rq=null; const rsend=(id,x)=>{ if(!hubCh) return; if(!rq){ rq=new Map(); setTimeout(()=>{ const q=rq; rq=null; if(closed||!hubCh) return; const b=[]; q.forEach((ids,msg)=>b.push({to:ids,x:msg}));
+        try{ hubCh.send({type:'broadcast',event:'m',payload:{b}}); }catch(e){} },100); } const a=rq.get(x); if(a){ if(!a.includes(id)) a.push(id); } else rq.set(x,[id]); };
     const isObj=p=>p&&typeof p==='object'&&!Array.isArray(p);
     const upd=(id,p)=>{ if(closed) return; const m=members.get(id)||{}; m.presence=Object.freeze(isObj(p)?p:{}); m.seen=performance.now(); members.set(id,m); notify(); };
     // 바뀐 칸만 받아서 합쳐요 (null = 지우기)
@@ -2492,31 +2511,68 @@ function makeP2P(){
         if(hub) conns.forEach(c=>send(c,msg)); else send(hubConn,msg); },
       peers(){ return snap; },
       onPeers(f){ subs.push(f); setTimeout(()=>{ try{ f({peers:snap}); }catch(e){} },0); return ()=>{ const i=subs.indexOf(f); if(i>=0) subs.splice(i,1); }; },
-      connected(){ return open&&!closed&&(hub?!peer.disconnected||conns.size>0:!!(hubConn&&hubConn.open)); },
-      async leave(){ closed=true; clearInterval(beat); try{ peer.destroy(); }catch(e){} },
+      connected(){ return open&&!closed&&(hub?(!!peer&&!peer.disconnected)||!!hubCh||conns.size>0:!!(hubConn&&hubConn.open)); },
+      get relay(){ return viaRelay||[...conns.values()].some(c=>c.relay); },
+      async leave(){ closed=true; clearInterval(beat); clearInterval(helloT); try{ peer&&peer.destroy(); }catch(e){}
+        if(viaRelay&&hubConn) send(hubConn,enc({t:'bye'}));
+        setTimeout(()=>{ try{ if(sb){ [hubCh,myCh,...gChs.values()].forEach(ch=>{ if(ch) sb.removeChannel(ch); }); } }catch(e){} },150); },
       async emit(){}, on(){ return ()=>{}; }
     };
     // 한동안 소식이 없으면 나간 것으로 봐요 (탭을 갑자기 닫은 경우)
     const beat=setInterval(()=>{ const now=performance.now(); members.forEach((m,id)=>{ if(now-m.seen<8000) return; drop(id);
       if(hub){ const c=conns.get(id); conns.delete(id); try{ c&&c.close(); }catch(e){} const j=enc({t:'x',id}); conns.forEach(c2=>send(c2,j)); } }); },1000);
-    const to=setTimeout(()=>fail({code:'signal'}),10000);   // 방 서버에 닿지 못함
-    const fail=e=>{ if(done) return; done=true; clearTimeout(to); clearInterval(beat); try{ peer&&peer.destroy(); }catch(_){} rej(e); };
+    let helloT=0;
+    const to=setTimeout(()=>{ if(hub&&hubCh) return; if(!hub&&goRelay()) return; fail({code:'signal'}); },10000);   // 방 서버에 닿지 못함
+    const fail=e=>{ if(done) return; done=true; clearTimeout(to); clearInterval(beat); clearInterval(helloT); try{ peer&&peer.destroy(); }catch(_){} try{ if(sb) [hubCh,myCh].forEach(ch=>ch&&sb.removeChannel(ch)); }catch(_){} rej(e); };
     const ok=()=>{ if(done) return; done=true; clearTimeout(to); open=true; snap=snapshot(); res(api); };
-    try{ peer=hub?new Peer(PFX+name,opt):new Peer(opt); }catch(e){ fail({code:'network'}); return; }
-    peer.on('open',id=>{ myId=id; snap=snapshot(); clearTimeout(to);
-      if(hub){ ok(); return; }
+    // 방장: 중계 채널도 같이 열어 둬요 (친구가 직접 연결이 안 되면 이리로 와요)
+    const hubRelay=async()=>{ if(!RELAY) return;
+      try{ sb=await sbClient(); if(closed) return;
+        hubCh=await sbJoin(sb,TOPIC,m=>{ if(closed||!m||m.t!=='hello'||typeof m.f!=='string'||!/^r-[a-z0-9]{6,16}$/.test(m.f)) return; const gid=m.f;
+          if(conns.has(gid)||gChs.has(gid)) return; gChs.set(gid,null);
+          sbJoin(sb,TOPIC+'-'+gid,gm=>{ const c=conns.get(gid); if(c&&c.relay&&typeof gm.x==='string'){ if(gm.x==='{"t":"bye"}'){ c.close(); return; } c.emit('data',gm.x); } })
+            .then(ch=>{ if(closed){ sb.removeChannel(ch); return; } gChs.set(gid,ch);
+              const c=vconn(gid,x=>rsend(gid,x),()=>{ const ch2=gChs.get(gid); gChs.delete(gid); try{ ch2&&sb.removeChannel(ch2); }catch(_){} }); onConn(c); c.emit('open'); })
+            .catch(()=>gChs.delete(gid)); });
+        if(!myId) myId=PFX+name; ok();
+      }catch(e){} };
+    if(hub){ myId=PFX+name; hubRelay(); }
+    // 친구: 중계로 방장에게 붙어요
+    let relayTried=false;
+    function goRelay(){ if(!RELAY||relayTried||done) return false; relayTried=true; viaRelay=true; status('학교·회사 와이파이용 중계로 연결하는 중…');
+      try{ peer&&peer.destroy(); }catch(_){}
+      const gid='r-'+Math.random().toString(36).slice(2,12).padEnd(8,'0'); myId=gid;
+      (async()=>{ try{ sb=await sbClient();
+        myCh=await sbJoin(sb,TOPIC+'-'+gid,()=>{});
+        let c=null;
+        hubCh=await sbJoin(sb,TOPIC,m=>{ if(!m||!Array.isArray(m.b)) return; const mine=m.b.filter(e=>e&&typeof e.x==='string'&&Array.isArray(e.to)&&e.to.includes(gid)); if(!mine.length) return;
+          if(!c){ c=vconn(PFX+name,x=>{ try{ myCh.send({type:'broadcast',event:'m',payload:{x}}); }catch(_){} }); hubConn=c; wireGuest(c); clearInterval(helloT); send(c,enc({t:'u',p:pres})); ok(); }
+          mine.forEach(e=>c.emit('data',e.x)); });
+        const hello=()=>{ try{ hubCh.send({type:'broadcast',event:'m',payload:{t:'hello',f:gid}}); }catch(_){} };
+        hello(); let n=0; helloT=setInterval(()=>{ if(done){ clearInterval(helloT); return; } if(++n>=5){ clearInterval(helloT); api.noHost=true; ok(); return; } hello(); },1500);
+      }catch(e){ fail({code:'signal'}); } })();
+      return true; }
+    // 친구 쪽 연결에 받는 처리를 붙여요 (직접 연결·중계 같이 씀)
+    function wireGuest(c){
+      c.on('data',x=>{ const m=dec(x); if(!m||typeof m!=='object'||typeof m.id!=='string'||m.id===myId) return;
+        if(m.t==='u') upd(m.id,m.p); else if(m.t==='d'){ if(members.has(m.id)) merge(m.id,m.d); } else if(m.t==='x') drop(m.id); });
+      c.on('close',()=>{ if(hubConn===c){ members.clear(); notify(); } }); }
+    try{ peer=hub?new Peer(PFX+name,opt):new Peer(opt); }catch(e){ if(hub){ if(!RELAY) fail({code:'network'}); } else if(!goRelay()) fail({code:'network'}); }
+    if(peer) peer.on('open',id=>{ if(viaRelay) return; myId=id; snap=snapshot();
+      if(hub){ clearTimeout(to); ok(); return; }
+      clearTimeout(to);
       // 방장과 직접 연결: 안 되면 두 번 더 다시 해 봐요 (중계 서버를 거치면 시간이 더 걸려요)
       const tryConn=n=>{ if(done) return; status(`방장과 연결하는 중… (${n}/3)`);
         const c=peer.connect(PFX+name,{reliable:true,serialization:'raw'}); hubConn=c; let opened=false;
-        const t=setTimeout(()=>{ if(opened||done) return; try{ c.close(); }catch(e){} if(n<3) tryConn(n+1); else fail({code:'p2p'}); },n===1?9000:12000);
-        c.on('open',()=>{ opened=true; clearTimeout(t); send(c,enc({t:'u',p:pres})); ok(); });
-        c.on('error',()=>{ if(opened||done) return; clearTimeout(t); if(n<3) setTimeout(()=>tryConn(n+1),500); else fail({code:'p2p'}); });
-        c.on('data',x=>{ const m=dec(x); if(!m||typeof m!=='object'||typeof m.id!=='string'||m.id===myId) return;
-          if(m.t==='u') upd(m.id,m.p); else if(m.t==='d'){ if(members.has(m.id)) merge(m.id,m.d); } else if(m.t==='x') drop(m.id); });
-        c.on('close',()=>{ if(hubConn===c){ members.clear(); notify(); } }); };
+        // 첫 번째에 안 되면 중계로 넘어가요 (중계가 없으면 두 번 더 해 봐요)
+        const next=()=>{ if(done||viaRelay) return; if(goRelay()) return; if(n<3) tryConn(n+1); else fail({code:'p2p'}); };
+        const t=setTimeout(()=>{ if(opened||done) return; try{ c.close(); }catch(e){} next(); },n===1?9000:12000);
+        c.on('open',()=>{ if(viaRelay||done){ try{ c.close(); }catch(e){} return; } opened=true; clearTimeout(t); send(c,enc({t:'u',p:pres})); ok(); });
+        c.on('error',()=>{ if(opened||done) return; clearTimeout(t); setTimeout(next,300); });
+        wireGuest(c); };
       tryConn(1);
     });
-    if(hub) peer.on('connection',c=>{
+    function onConn(c){
       c.on('open',()=>{ if(closed){ try{ c.close(); }catch(e){} return; } conns.set(c.peer,c); upd(c.peer,{});
         // 새로 온 사람에게 지금 방에 있는 모두를 알려 줘요
         send(c,enc({t:'u',id:myId,p:pres})); members.forEach((m,id)=>{ if(id!==c.peer) send(c,enc({t:'u',id,p:m.presence})); });
@@ -2526,12 +2582,17 @@ function makeP2P(){
         if(m.t==='u'){ upd(c.peer,m.p); msg=enc({t:'u',id:c.peer,p:members.get(c.peer).presence}); }
         else if(m.t==='d'){ const d=merge(c.peer,m.d); if(!d) return; if(!Object.keys(d).length){ touch(c.peer); return; } msg=enc({t:'d',id:c.peer,d}); }
         if(msg) conns.forEach((c2,id)=>{ if(id!==c.peer) send(c2,msg); }); });
-      c.on('close',()=>{ conns.delete(c.peer); drop(c.peer); const j=enc({t:'x',id:c.peer}); conns.forEach(c2=>send(c2,j)); });
-    });
-    peer.on('error',e=>{ const t=e&&e.type; if(done) return;
-      if(t==='peer-unavailable'){ api.noHost=true; ok(); return; }        // 그 코드의 방이 없으면 빈 방으로 돌려줘요 (아래에서 '방을 찾을 수 없어요')
-      fail({code:t==='unavailable-id'?'taken':t==='browser-incompatible'?'browser':['network','server-error','socket-error','socket-closed'].includes(t)?'signal':'network'}); });
-    peer.on('disconnected',()=>{ try{ if(!closed&&!peer.destroyed) peer.reconnect(); }catch(e){} });
+      c.on('close',()=>{ if(conns.get(c.peer)!==c) return; conns.delete(c.peer); drop(c.peer); const j=enc({t:'x',id:c.peer}); conns.forEach(c2=>send(c2,j)); });
+    }
+    if(hub&&peer) peer.on('connection',onConn);
+    if(peer) peer.on('error',e=>{ const t=e&&e.type;
+      if(t==='unavailable-id'&&hub){ if(!done) fail({code:'taken'}); else if(!conns.size) { try{ peer.destroy(); }catch(_){} } return; }
+      if(done||viaRelay) return;
+      if(t==='peer-unavailable'){ if(goRelay()) return; api.noHost=true; ok(); return; }        // 그 코드의 방이 없으면 빈 방으로 돌려줘요 (아래에서 '방을 찾을 수 없어요')
+      const code=t==='browser-incompatible'?'browser':['network','server-error','socket-error','socket-closed'].includes(t)?'signal':'network';
+      if(hub){ if(RELAY&&code!=='browser') return; fail({code}); return; }      // 방장은 중계 채널만으로도 방을 열 수 있어요
+      if(code!=='browser'&&goRelay()) return; fail({code}); });
+    if(peer) peer.on('disconnected',()=>{ try{ if(!closed&&!peer.destroyed) peer.reconnect(); }catch(e){} });
   }); }
   return { p2p:true, peers:()=>[], onPeers:()=>()=>{}, presence:async()=>{}, onStatus:f=>{ status=typeof f==='function'?f:()=>{}; }, join:(name,o)=>room(String(name),!!(o&&o.hub)) };
 }
@@ -2572,7 +2633,7 @@ const NET={
   err(e){
     const code=e&&e.code; let m=typeof e==='string'?e:'';
     if(!m&&code==='taken') m='방 코드가 겹쳤어요. 한 번 더 눌러 주세요.';
-    if(!m&&code==='signal') m='연결 서버에 닿지 못했어요. 인터넷 연결을 확인하고 잠시 뒤에 다시 해 주세요.';
+    if(!m&&code==='signal') m='연결 서버에 닿지 못했어요. 인터넷 연결을 확인하고 잠시 뒤에 다시 해 주세요. 계속 안 되면 휴대폰 핫스팟으로 해 보세요.';
     if(!m&&code==='p2p') m='방은 찾았는데 방장과 직접 연결이 안 돼요. 회사·학교 와이파이처럼 막힌 네트워크일 수 있어요. 한쪽이 휴대폰 핫스팟으로 바꿔서 다시 해 보세요.';
     if(!m&&code==='browser') m='이 브라우저는 같이 하기를 지원하지 않아요. 크롬이나 엣지, 사파리 최신 버전으로 열어 주세요.';
     if(!m) m=code==='not_permitted'||code==='not_granted'?'같이 하기에 들어갈 수 없어요. claude.ai에 로그인했는지, 이 게임이 나에게 공유됐는지 확인해 주세요.':code==='limit_reached'?'지금은 방을 더 열 수 없어요. 잠시 뒤에 다시 해 주세요.':'연결이 잘 안 돼요. 잠시 뒤에 다시 해 주세요.';
@@ -2676,7 +2737,7 @@ const NET={
   },
   hostPush(dt){
     if(this.mode!=='host'||!this.room) return;
-    this.pushT-=dt; if(dt<1&&this.pushT>0) return; this.pushT=1/15;
+    this.pushT-=dt; if(dt<1&&this.pushT>0) return; this.pushT=this.room&&this.room.relay?1/10:1/15;   // 중계로 연결된 친구가 있으면 1초에 10번만 보내요 (무료 한도)
     // 방 정보(맵·자리)와 합쳐 4KB를 넘지 않게 상태 크기를 맞춰요
     const base=u8len(JSON.stringify({role:'host',mp:curMap.grid,mn:curMap.name.slice(0,20),sl:this.slots,g:0}));
     this.room.presence({g:snap(Math.max(900,3900-base))}).catch(()=>{});
@@ -2719,7 +2780,7 @@ const NET={
         const g=h.presence.g; if(g&&g!==this.lastG){ this.lastG=g; applySnap(g); } }
       if(state==='play') players.forEach((p,i)=>{ if(i!==me&&p.active) followRemote(p,dt); });
       this.sendT-=dt;
-      if(this.sendT<=0){ this.sendT=1/15; const P=L();
+      if(this.sendT<=0){ this.sendT=this.room&&this.room.relay?1/10:1/15; const P=L();
         this.room.presence({p:[r2(P.x),r2(P.z),r2(P.fx),r2(P.fz),P.anim,P.target?stations.indexOf(P.target):-1],a:this.acts}).catch(()=>{}); }
     }
   }
