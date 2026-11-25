@@ -82,6 +82,7 @@ h1 em{font-style:normal;color:var(--gold-deep)}
 .note{margin:0;font-size:14px;color:var(--muted);text-align:center}
 .stars{display:flex;justify-content:center;gap:10px}
 .stars{gap:6px}
+.perfect{font-family:var(--font);font-size:clamp(30px,8vw,44px);font-weight:900;letter-spacing:.06em;text-align:center;margin:-4px 0 2px;background:linear-gradient(90deg,#7c3aed,#c084fc,#7c3aed);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 2px 0 #4c1d95);animation:pop .5s cubic-bezier(.3,1.8,.5,1) 1.5s both}
 .stars svg{width:min(56px,15vw);height:min(56px,15vw)}
 .stars.purple svg.on{filter:drop-shadow(0 0 6px rgba(155,92,246,.55))}
 .stars svg.on{animation:pop .45s cubic-bezier(.3,1.8,.5,1) both}
@@ -417,6 +418,7 @@ kbd{font-family:var(--font)!important;font-weight:900;letter-spacing:.5px}
 <div class="screen" id="endScr" hidden>
   <div class="panel" style="max-width:520px">
     <div class="big" style="font-size:42px">영업 종료!</div>
+    <div class="perfect" id="perfectTag" hidden>PERFECT!</div>
     <div class="stars" id="stars"></div>
     <div class="big" id="endScore">0</div>
     <div class="stats">
@@ -443,9 +445,9 @@ kbd{font-family:var(--font)!important;font-weight:900;letter-spacing:.5px}
 /* ---------------- 설정 ---------------- */
 const BLEND=6, TOTAL_CUPS=3, CHOCO_FAST=5;
 const GAME_TIME=360, MIX=10, COOK=17.5, WARN=20.5, BURN=24.5, CHOP=2.25, WASH=1.6, RETURN_DELAY=6, TOTAL_PLATES=4;
-const STAR_BASE=[100,180,260,340,420];
+const STAR_BASE=[150,260,375,490,600];
 // 같이 하면 별 기준을 조금 올려요 (2인 +5%, 3인 +12%, 4인 +20%)
-const starGoals=()=>{ const crew=NET.mode==='solo'?1:players.filter(p=>p.active).length; const k=[1,1,1.05,1.12,1.2][crew]||1; return STAR_BASE.map(g=>Math.round(g*k/10)*10); };
+const starGoals=()=>{ const crew=NET.mode==='solo'?1:players.filter(p=>p.active).length; const k=[1,1,1.05,1.12,1.2][crew]||1; return STAR_BASE.map(g=>Math.round(g*k/5)*5); };
 const MAP=[
 "##WWWZMBRYHC#",
 "#...........#",
@@ -1525,7 +1527,7 @@ function endGame(){ guestMenu=false;
   const STAR_GOALS=starGoals(), n=STAR_GOALS.filter(g=>score>=g).length, perfect=n===5&&stats.failed===0&&stats.burnt===0;
   const SC=perfect?['#9b5cf6','#5b2aa8']:['#f7b52c','#8a5a07'];
   const star=(on,i)=>`<svg viewBox="0 0 24 24" class="${on?'on':''}" style="animation-delay:${.2+i*.25}s"><path d="M12 2.5l2.9 6.1l6.6.8l-4.9 4.5l1.3 6.6L12 17.2l-5.9 3.3l1.3-6.6l-4.9-4.5l6.6-.8z" fill="${on?SC[0]:'#e3d6bb'}" stroke="${on?SC[1]:'#c9bba3'}" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
-  $('stars').innerHTML=[0,1,2,3,4].map(i=>star(i<n,i)).join(''); $('stars').classList.toggle('purple',perfect);
+  $('stars').innerHTML=[0,1,2,3,4].map(i=>star(i<n,i)).join(''); $('stars').classList.toggle('purple',perfect); $('perfectTag').hidden=!perfect;
   $('endScore').textContent=score+'점';
   $('stServed').textContent=stats.served; $('stFailed').textContent=stats.failed; $('stBurnt').textContent=stats.burnt;
   $('goalNote').textContent=n<5?`다음 별까지 ${STAR_GOALS[n]-score}점 남았어요 (별 기준: ${STAR_GOALS.join(' / ')}점)`:perfect?'완벽한 영업! 보라 별 다섯 개, 진짜 와플 장인이에요!':`별 다섯 개! 놓친 주문과 태운 와플 없이 해내면 보라 별이 돼요.`;
