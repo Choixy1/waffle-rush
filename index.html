@@ -366,7 +366,7 @@ kbd{font-family:var(--font)!important;font-weight:900;letter-spacing:.5px}
     <div class="tabs"><button class="tab on" data-tab="mine">내 맵</button><button class="tab" data-tab="all">모두의 맵</button></div>
     <p class="note" id="mapNote"></p>
     <div class="maps" id="mapList"></div>
-    <div class="coderow"><input id="mapCodeIn" placeholder="친구에게 받은 맵 코드를 붙여넣어요" autocomplete="off" spellcheck="false" aria-label="맵 코드"><button class="btn sm alt" id="mapCodeBtn">코드로 불러오기</button></div>
+    <div class="coderow"><input id="mapCodeIn" placeholder="친구에게 받은 맵 코드를 붙여넣어요" autocomplete="off" spellcheck="false" aria-label="맵 코드"><button class="btn sm alt" id="mapCodeBtn">코드로 불러오기</button><button class="btn sm alt" id="mapAllBtn">내 맵 전부 복사</button></div>
     <div class="btnrow"><button class="btn sm" id="newMapBtn">새 맵 만들기</button><button class="btn sm alt" id="mapBack">돌아가기</button></div>
   </div>
 </div>
@@ -2675,15 +2675,28 @@ function copyMapCode(g){
   const fall=()=>{ const i=$('mapCodeIn'); i.value=g; i.focus(); i.select(); toast('아래 칸의 코드를 복사해서 보내 주세요'); };
   try{ navigator.clipboard.writeText(g).then(()=>toast('맵 코드를 복사했어요. 친구에게 보내 주세요'),fall); }catch(e){ fall(); }
 }
+// 내 맵 전부를 코드 하나로 (다른 곳으로 옮길 때)
+const BUNDLE='WRMAPS:';
+function copyAllMaps(){ const l=lsGet(); if(!l.length){ toast('아직 내 맵이 없어요',true); return; } copyMapCode(BUNDLE+JSON.stringify(l.map(m=>[m.name,m.grid]))); }
 function importMapCode(){
-  const g=String($('mapCodeIn').value||'').trim().replace(/\s+/g,'');
+  const raw=String($('mapCodeIn').value||'').trim();
+  if(raw.startsWith(BUNDLE)){ let arr=null; try{ arr=JSON.parse(raw.slice(BUNDLE.length)); }catch(e){}
+    if(!Array.isArray(arr)){ toast('맵 코드가 올바르지 않아요',true); return; }
+    const list=lsGet(); let n=0;
+    arr.slice(0,200).forEach(x=>{ if(!Array.isArray(x)) return; const g=String(x[1]||''); if(!validGridStr(g)||list.some(m=>m.grid===g)) return;
+      list.push({id:newId(),name:cleanName(x[0])||'받은 맵',grid:g,at:Date.now(),up:false}); n++; });
+    if(n&&!lsSet(list)){ toast('이 브라우저에서는 저장할 수 없어요',true); return; }
+    $('mapCodeIn').value=''; MAPS.tab='mine'; MAPS.render(); toast(n?`내 맵 ${n}개를 불러왔어요`:'이미 모두 내 맵에 있어요'); return; }
+  const g=raw.replace(/\s+/g,'');
   if(!validGridStr(g)){ toast('맵 코드가 올바르지 않아요',true); return; }
   const list=lsGet(); const ex=list.find(m=>m.grid===g);
   if(!ex){ list.unshift({id:newId(),name:'받은 맵',grid:g,at:Date.now(),up:false}); if(!lsSet(list)){ toast('이 브라우저에서는 저장할 수 없어요',true); return; } }
   $('mapCodeIn').value=''; MAPS.tab='mine'; MAPS.render(); toast(ex?'이미 내 맵에 있어요':'내 맵에 "받은 맵"으로 넣었어요');
 }
 const lsGet=()=>{ try{ const v=JSON.parse(localStorage.getItem(LS_KEY)||'[]'); return Array.isArray(v)?v.filter(m=>m&&validGridStr(m.grid)).map(m=>({id:String(m.id).slice(0,30),name:cleanName(m.name)||'이름 없는 맵',grid:m.grid,at:+m.at||0,up:!!m.up})):[]; }catch(e){ return []; } };
-const lsSet=list=>{ try{ localStorage.setItem(LS_KEY,JSON.stringify(list.slice(0,40))); return true; }catch(e){ return false; } };
+// 저장할 때 이 버전에서 못 읽는 맵(앞으로 생길 형식 등)도 지우지 않고 그대로 둬요
+const lsSet=list=>{ try{ let keep=[]; try{ const v=JSON.parse(localStorage.getItem(LS_KEY)||'[]'); if(Array.isArray(v)) keep=v.filter(m=>m&&!validGridStr(m.grid)); }catch(_){}
+  localStorage.setItem(LS_KEY,JSON.stringify(list.slice(0,200).concat(keep))); return true; }catch(e){ return false; } };
 
 const MAPS={
   db:null, user:null, uid:null, all:[], tab:'mine', unsub:null, loaded:false,
@@ -2706,7 +2719,7 @@ const MAPS={
     const list=$('mapList'); list.textContent=''; const note=$('mapNote');
     let maps;
     if(this.tab==='mine'){ maps=[{id:'default',name:'기본 주방',grid:DEFAULT_GRID,builtin:true},...lsGet().map(m=>Object.assign(m,{mine:true}))];
-      note.textContent='내 맵은 이 기기에 저장돼요. "코드 복사"로 맵 코드를 친구에게 보내면 친구도 불러올 수 있어요.'; }
+      note.textContent='내 맵은 이 브라우저에만 저장돼요 (Claude 링크와 사이트는 따로예요). 옮기려면 "내 맵 전부 복사" 후 다른 쪽에서 "코드로 불러오기"를 눌러요.'; }
     else { maps=this.all;
       note.textContent=!this.db?(window.claude?'모두의 맵은 claude.ai에 로그인한 상태로 이 게임을 열면 볼 수 있어요.':'모두의 맵은 Claude 링크에서만 볼 수 있어요. 여기서는 "코드 복사"와 "코드로 불러오기"로 맵을 주고받아요.'):!this.loaded?'불러오는 중...':maps.length?'다른 사람이 올린 맵이에요. 골라서 플레이하거나 복사해서 고칠 수 있어요.':'아직 올라온 맵이 없어요. 첫 번째로 올려보세요!'; }
     maps.forEach(m=>{
@@ -2940,7 +2953,7 @@ $('edClear').onclick=()=>{ ED.undo.push(ED.grid); const d=gDim(ED.grid)||{w:13,h
 $('edName').addEventListener('input',()=>{ ED.dirty=true; ED.autosave(); });
 $('testBack').onclick=()=>ED.back(); $('editBackBtn').onclick=()=>ED.back();
 $('mapBtn').onclick=()=>MAPS.open();
-$('mapCodeBtn').onclick=()=>importMapCode();
+$('mapCodeBtn').onclick=()=>importMapCode(); $('mapAllBtn').onclick=()=>copyAllMaps();
 $('mapCodeIn').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); importMapCode(); } }); $('mapBack').onclick=()=>show('titleScr');
 $('makeBtn').onclick=()=>ED.open({id:newId(),name:'새 맵',grid:BLANK_GRID});
 $('newMapBtn').onclick=()=>ED.open({id:newId(),name:'새 맵',grid:BLANK_GRID});
