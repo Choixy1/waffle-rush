@@ -2407,7 +2407,11 @@ function applySnap(g){
    방장이 중심이 되고, 친구들의 상태를 방장이 서로에게 전해 줘요. Claude room과 같은 모양(presence·peers·onPeers)으로 감싸서
    아래 NET 코드는 어느 쪽이든 그대로 써요. */
 function makeP2P(){
-  const opt=Object.assign({debug:0},window.WAFFLE_PEER||{}), PFX='waffle-rush-v1-';
+  // 서로 직접 닿지 않는 네트워크(회사·학교·휴대폰 데이터)를 위해 중계(TURN) 서버를 여러 곳, TCP·443 포트까지 써요
+  const ICE=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']},{urls:'stun:stun.cloudflare.com:3478'},
+    {urls:['turn:eu-0.turn.peerjs.com:3478','turn:us-0.turn.peerjs.com:3478','turn:eu-0.turn.peerjs.com:3478?transport=tcp','turn:us-0.turn.peerjs.com:3478?transport=tcp'],username:'peerjs',credential:'peerjsp'}];
+  const opt=Object.assign({debug:0,config:{iceServers:ICE}},window.WAFFLE_PEER||{}), PFX='waffle-rush-v1-';
+  let status=()=>{};
   function room(name,hub){ return new Promise((res,rej)=>{
     const subs=[], members=new Map(), conns=new Map();
     let pres=Object.freeze({}), peer=null, myId=null, hubConn=null, open=false, closed=false, done=false, snap=[], nq=false;
@@ -2436,17 +2440,22 @@ function makeP2P(){
     // 한동안 소식이 없으면 나간 것으로 봐요 (탭을 갑자기 닫은 경우)
     const beat=setInterval(()=>{ const now=performance.now(); members.forEach((m,id)=>{ if(now-m.seen<8000) return; drop(id);
       if(hub){ const c=conns.get(id); conns.delete(id); try{ c&&c.close(); }catch(e){} const j=enc({t:'x',id}); conns.forEach(c2=>send(c2,j)); } }); },1000);
-    const to=setTimeout(()=>fail({code:'timeout'}),12000);
+    const to=setTimeout(()=>fail({code:'signal'}),10000);   // 방 서버에 닿지 못함
     const fail=e=>{ if(done) return; done=true; clearTimeout(to); clearInterval(beat); try{ peer&&peer.destroy(); }catch(_){} rej(e); };
     const ok=()=>{ if(done) return; done=true; clearTimeout(to); open=true; snap=snapshot(); res(api); };
     try{ peer=hub?new Peer(PFX+name,opt):new Peer(opt); }catch(e){ fail({code:'network'}); return; }
-    peer.on('open',id=>{ myId=id; snap=snapshot();
+    peer.on('open',id=>{ myId=id; snap=snapshot(); clearTimeout(to);
       if(hub){ ok(); return; }
-      const c=peer.connect(PFX+name,{reliable:true,serialization:'raw'}); hubConn=c;
-      c.on('open',()=>{ send(c,enc({t:'u',p:pres})); ok(); });
-      c.on('data',x=>{ const m=dec(x); if(!m||typeof m!=='object'||typeof m.id!=='string'||m.id===myId) return;
-        if(m.t==='u') upd(m.id,m.p); else if(m.t==='d'){ if(members.has(m.id)) merge(m.id,m.d); } else if(m.t==='x') drop(m.id); });
-      c.on('close',()=>{ members.clear(); notify(); });
+      // 방장과 직접 연결: 안 되면 두 번 더 다시 해 봐요 (중계 서버를 거치면 시간이 더 걸려요)
+      const tryConn=n=>{ if(done) return; status(`방장과 연결하는 중… (${n}/3)`);
+        const c=peer.connect(PFX+name,{reliable:true,serialization:'raw'}); hubConn=c; let opened=false;
+        const t=setTimeout(()=>{ if(opened||done) return; try{ c.close(); }catch(e){} if(n<3) tryConn(n+1); else fail({code:'p2p'}); },n===1?9000:12000);
+        c.on('open',()=>{ opened=true; clearTimeout(t); send(c,enc({t:'u',p:pres})); ok(); });
+        c.on('error',()=>{ if(opened||done) return; clearTimeout(t); if(n<3) setTimeout(()=>tryConn(n+1),500); else fail({code:'p2p'}); });
+        c.on('data',x=>{ const m=dec(x); if(!m||typeof m!=='object'||typeof m.id!=='string'||m.id===myId) return;
+          if(m.t==='u') upd(m.id,m.p); else if(m.t==='d'){ if(members.has(m.id)) merge(m.id,m.d); } else if(m.t==='x') drop(m.id); });
+        c.on('close',()=>{ if(hubConn===c){ members.clear(); notify(); } }); };
+      tryConn(1);
     });
     if(hub) peer.on('connection',c=>{
       c.on('open',()=>{ if(closed){ try{ c.close(); }catch(e){} return; } conns.set(c.peer,c); upd(c.peer,{});
@@ -2461,11 +2470,11 @@ function makeP2P(){
       c.on('close',()=>{ conns.delete(c.peer); drop(c.peer); const j=enc({t:'x',id:c.peer}); conns.forEach(c2=>send(c2,j)); });
     });
     peer.on('error',e=>{ const t=e&&e.type; if(done) return;
-      if(t==='peer-unavailable'){ ok(); return; }        // 그 코드의 방이 없으면 빈 방으로 돌려줘요 (아래에서 '방을 찾을 수 없어요')
-      fail({code:t==='unavailable-id'?'taken':'network'}); });
+      if(t==='peer-unavailable'){ api.noHost=true; ok(); return; }        // 그 코드의 방이 없으면 빈 방으로 돌려줘요 (아래에서 '방을 찾을 수 없어요')
+      fail({code:t==='unavailable-id'?'taken':t==='browser-incompatible'?'browser':['network','server-error','socket-error','socket-closed'].includes(t)?'signal':'network'}); });
     peer.on('disconnected',()=>{ try{ if(!closed&&!peer.destroyed) peer.reconnect(); }catch(e){} });
   }); }
-  return { p2p:true, peers:()=>[], onPeers:()=>()=>{}, presence:async()=>{}, join:(name,o)=>room(String(name),!!(o&&o.hub)) };
+  return { p2p:true, peers:()=>[], onPeers:()=>()=>{}, presence:async()=>{}, onStatus:f=>{ status=typeof f==='function'?f:()=>{}; }, join:(name,o)=>room(String(name),!!(o&&o.hub)) };
 }
 
 const NET={
@@ -2493,7 +2502,7 @@ const NET={
       const c=window.claude;
       if(!c||typeof c.use!=='function'){
         // 별도 사이트: 로그인 없이 브라우저끼리 연결해요
-        if(typeof window.Peer==='function'){ this.api=makeP2P(); this.p2p=true; $('coopNote').hidden=true; } else $('coopNote').hidden=false;
+        if(typeof window.Peer==='function'){ this.api=makeP2P(); this.p2p=true; $('coopNote').hidden=true; this.api.onStatus(t=>{ if(!this.room) $('coopErr').textContent=t; }); } else $('coopNote').hidden=false;
         return; }
       const api=await c.use('room'); if(!api){ $('coopNote').hidden=false; return; }
       this.api=api; $('coopNote').hidden=true;
@@ -2504,6 +2513,9 @@ const NET={
   err(e){
     const code=e&&e.code; let m=typeof e==='string'?e:'';
     if(!m&&code==='taken') m='방 코드가 겹쳤어요. 한 번 더 눌러 주세요.';
+    if(!m&&code==='signal') m='연결 서버에 닿지 못했어요. 인터넷 연결을 확인하고 잠시 뒤에 다시 해 주세요.';
+    if(!m&&code==='p2p') m='방은 찾았는데 방장과 직접 연결이 안 돼요. 회사·학교 와이파이처럼 막힌 네트워크일 수 있어요. 한쪽이 휴대폰 핫스팟으로 바꿔서 다시 해 보세요.';
+    if(!m&&code==='browser') m='이 브라우저는 같이 하기를 지원하지 않아요. 크롬이나 엣지, 사파리 최신 버전으로 열어 주세요.';
     if(!m) m=code==='not_permitted'||code==='not_granted'?'같이 하기에 들어갈 수 없어요. claude.ai에 로그인했는지, 이 게임이 나에게 공유됐는지 확인해 주세요.':code==='limit_reached'?'지금은 방을 더 열 수 없어요. 잠시 뒤에 다시 해 주세요.':'연결이 잘 안 돼요. 잠시 뒤에 다시 해 주세요.';
     $('coopErr').textContent=m;
   },
@@ -2565,7 +2577,7 @@ const NET={
     try{
       r=await this.api.join('waffle-'+code.toLowerCase()); this.room=r;
       let host=null; const t0=performance.now();
-      while(performance.now()-t0<5000){ host=this.findPeer('host'); if(host) break; await wait(200); }
+      while(performance.now()-t0<5000&&!r.noHost){ host=this.findPeer('host'); if(host) break; await wait(200); }
       if(!host){ throw '그 코드의 방을 찾을 수 없어요. 코드를 다시 확인해 주세요.'; }
       if(this.hostSlots().every(Boolean)||host.presence.full){ throw '이미 4명이 들어가 있는 방이에요.'; }
       let mine=null; try{ mine=r.peers().find(p=>p.isMe)||null; }catch(_){}
