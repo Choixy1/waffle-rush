@@ -98,6 +98,12 @@ h1 em{font-style:normal;color:var(--gold-deep)}
 .btn[disabled]{opacity:.45;cursor:default;transform:none}
 .coop{display:grid;gap:14px}
 .coop h2{margin:0;font-size:17px;font-weight:800;font-family:var(--display);color:var(--navy)}
+.savebox{border-top:2px dashed #e3d6bb;margin-top:12px;padding-top:10px;text-align:center;font-size:15px}
+.savebox #saveInfo{color:#8a7a5c;font-size:13px}
+.savebox .btnrow{margin-top:8px;gap:6px;flex-wrap:wrap}
+.savebox .btnrow .btn,.savebox .coderow .btn{font-size:14px;padding:7px 12px}
+.savebox .coderow{margin:8px 0 2px}
+.savebox .coderow input{font-size:14px;padding:7px 10px}
 .coderow{display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;margin:10px 0 4px}
 .coderow input{flex:1;min-width:180px;max-width:380px;font-family:var(--font);font-size:15px;padding:9px 12px;border:2px solid #e3d6bb;border-radius:12px;background:#fff;color:var(--ink)}
 .coderow input:focus{outline:3px solid var(--gold);outline-offset:1px}
@@ -403,6 +409,10 @@ kbd{font-family:var(--font)!important;font-weight:900;letter-spacing:.5px}
       <label><span>그래픽</span><select id="gfxSel"><option value="auto">자동 (느리면 가볍게)</option><option value="high">선명하게</option><option value="low">가볍게 (느린 기기)</option></select><b id="gfxV"></b></label></div>
     <p class="sub" style="text-align:center;margin:0;font-size:15px">조작 키: 바꿀 동작을 누르고 원하는 키를 눌러요. 이미 쓰는 키면 두 동작의 키를 서로 바꿔요. 방향키는 항상 이동으로도 쓸 수 있어요.</p>
     <div class="klist" id="keyList"></div>
+    <div class="savebox"><div><b>저장</b> <span id="saveInfo"></span></div>
+      <div class="btnrow"><button class="btn sm alt" id="saveFileBtn">저장 파일 받기</button><button class="btn sm alt" id="saveCopyBtn">저장 코드 복사</button><button class="btn sm alt" id="saveLoadBtn">파일 불러오기</button><input type="file" id="saveFile" accept=".json,.txt,application/json,text/plain" hidden></div>
+      <div class="coderow"><input id="saveCodeIn" placeholder="저장 코드를 붙여넣어요" autocomplete="off" spellcheck="false" aria-label="저장 코드"><button class="btn sm alt" id="saveCodeBtn">코드로 불러오기</button></div>
+      <p class="sub" style="margin:2px 0 0;font-size:13px">맵·조작 키·소리·그래픽 설정이 모두 들어 있어요. 다른 기기나 사이트↔Claude 링크로 옮길 때 써요.</p></div>
     <div class="btnrow"><button class="btn sm alt" id="keyReset">처음 설정으로</button><button class="btn sm" id="keyBack">다 했어요</button></div>
   </div>
 </div>
@@ -509,9 +519,61 @@ const shakeSvg=food=>{ const c=SHAKE_ICOL[food.filter(f=>f!=='milk').sort().join
 
 /* ---------------- 오디오 ---------------- */
 let AC=null, SFX_BUS=null, MUS_BUS=null;
+/* ---------------- 저장: 브라우저 저장소 + 백업 사본 + IndexedDB + (Claude 링크) 계정 저장 ---------------- */
+const ST={mem:{}, ts:{}, TS:'waffle-rush-ts-v1', cloud:null, lsOk:false,
+  KEYS:['waffle-rush-audio-v1','waffle-rush-gfx-v1','waffle-rush-keys-v1','waffle-rush-maps-v1','waffle-rush-maps-v1-draft','waffle-rush-cur-v1','waffle-rush-up-v1','waffle-rush-secret-v1'],
+  LOCAL_ONLY:{'waffle-rush-secret-v1':1,'waffle-rush-up-v1':1},
+  J:v=>{ try{ JSON.parse(v); return true; }catch(e){ return false; } },
+  ls(){ try{ return window.localStorage||null; }catch(e){ return null; } },
+  raw(k){ const s=this.ls(); if(!s) return null; try{ return s.getItem(k); }catch(e){ return null; } },
+  ok(k,v){ return v!=null&&(k==='waffle-rush-gfx-v1'||k==='waffle-rush-secret-v1'||this.J(v)); },
+  // 원본이 없거나 깨졌으면 백업 사본, 그다음 이번 접속 동안 기억한 값으로 되살려요
+  get(k){ const v=this.raw(k); if(this.ok(k,v)) return v;
+    const b=this.raw(k+'~bak'); if(this.ok(k,b)){ this.put(k,b); return b; }
+    const m=this.mem[k]; return this.ok(k,m)?m:null; },
+  put(k,v){ const s=this.ls(); let ok=false; if(s){ try{ s.setItem(k,v); ok=true; }catch(e){} try{ s.setItem(k+'~bak',v); }catch(e){} } this.mem[k]=v; return ok; },
+  set(k,v,t){ v=String(v); this.ts[k]=t||Date.now(); const ok=this.put(k,v); this.putTs(); this.idbPut(k,v); if(!this.LOCAL_ONLY[k]) this.cloudQ(); return ok||!!this.cloud; },
+  putTs(){ const s=this.ls(); const v=JSON.stringify(this.ts); this.mem[this.TS]=v; if(s){ try{ s.setItem(this.TS,v); s.setItem(this.TS+'~bak',v); }catch(e){} } },
+  // 받은 값(IndexedDB·계정·저장 파일)과 비교해 더 새것만 들여와요
+  merge(src,force){ let got=0, mine=0;
+    this.KEYS.forEach(k=>{ const x=src&&src[k]; const lv=this.get(k), lt=this.ts[k]||0;
+      if(k==='waffle-rush-maps-v1'&&!force&&x&&typeof x.v==='string'&&lv!=null&&x.v!==lv){   // 맵 목록은 덮어쓰지 않고 합쳐요 (어느 쪽 맵도 잃지 않게)
+        try{ const A=JSON.parse(lv), B=JSON.parse(x.v); if(Array.isArray(A)&&Array.isArray(B)){ const out=A.slice(); let add=0;
+          B.forEach(m=>{ if(!m||!m.id) return; const i=out.findIndex(o=>o&&o.id===m.id); if(i<0){ out.push(m); add++; } else if((+m.at||0)>(+out[i].at||0)){ out[i]=m; add++; } });
+          if(add){ const v=JSON.stringify(out.slice(0,240)); this.ts[k]=Math.max(lt,+x.t||0); this.put(k,v); this.idbPut(k,v); got++; }
+          if(JSON.stringify(out)!==x.v) mine++; return; } }catch(e){} }
+      if(x&&typeof x.v==='string'&&this.ok(k,x.v)&&x.v.length<200000&&(force||lv==null||(+x.t||0)>lt)){ if(x.v!==lv){ this.ts[k]=force?Date.now():(+x.t||Date.now()); this.put(k,x.v); this.idbPut(k,x.v); got++; } }
+      else if(lv!=null&&(!x||(+x.t||0)<lt)) mine++; });
+    if(got) this.putTs(); return {got,mine}; },
+  dump(local){ const kv={}; this.KEYS.forEach(k=>{ if(!local&&this.LOCAL_ONLY[k]) return; const v=this.get(k); if(v!=null) kv[k]={v,t:this.ts[k]||0}; }); return kv; },
+  // IndexedDB 사본: localStorage만 지워졌을 때 되살려요
+  idbOpen(){ if(this._ip) return this._ip; this._ip=new Promise(r=>{ try{ const q=indexedDB.open('waffle-rush',1); q.onupgradeneeded=()=>q.result.createObjectStore('kv'); q.onsuccess=()=>r(q.result); q.onerror=q.onblocked=()=>r(null); }catch(e){ r(null); } }); return this._ip; },
+  idbPut(k,v){ this.idbOpen().then(d=>{ if(!d) return; try{ d.transaction('kv','readwrite').objectStore('kv').put({v,t:this.ts[k]||Date.now()},k); }catch(e){} }); },
+  idbAll(){ return this.idbOpen().then(d=>new Promise(r=>{ if(!d) return r({}); try{ const o={}, c=d.transaction('kv').objectStore('kv').openCursor(); c.onsuccess=()=>{ const x=c.result; if(x){ o[x.key]=x.value; x.continue(); } else r(o); }; c.onerror=()=>r({}); }catch(e){ r({}); } })); },
+  // Claude 링크: 내 계정에만 보이는 칸(data/users/<나>)에 같이 저장해요
+  async cloudInit(db,uid){ if(!db||!uid||this.cloud) return; const ref=db.collection('data/users/'+uid).doc('save'); let d=null;
+    try{ const s=await ref.get(); d=s.exists?s.data():null; }catch(e){ return; }
+    this.cloud=ref; const r=this.merge(d&&d.kv&&typeof d.kv==='object'?d.kv:{});
+    if(r.got) this.loaded(); if(r.mine) this.cloudQ(); this.info(); },
+  cloudQ(){ if(!this.cloud) return; this.dirty=true; clearTimeout(this._ct); this._ct=setTimeout(()=>this.cloudPush(),1500); },
+  async cloudPush(){ if(!this.cloud||!this.dirty) return; if(this.busy){ this.cloudQ(); return; } this.busy=true; this.dirty=false;
+    try{ await this.cloud.set({v:1,at:Date.now(),kv:this.dump(false)}); }catch(e){ this.dirty=true; }
+    this.busy=false; if(this.dirty) this.cloudQ(); },
+  onLoad:null, loaded(){ try{ if(this.onLoad) this.onLoad(); }catch(e){} },
+  info(){ const el=document.getElementById('saveInfo'); if(!el) return;
+    el.textContent=this.cloud?'이 브라우저와 Claude 계정에 같이 저장돼요':this.lsOk?'이 브라우저에 저장돼요 (백업 사본까지 2벌)':'이 브라우저는 저장이 막혀 있어요. 끝내기 전에 저장 파일을 받아 두세요'; },
+  boot(){ const s=this.ls(); try{ if(s){ s.setItem('waffle-rush-probe','1'); s.removeItem('waffle-rush-probe'); this.lsOk=true; } }catch(e){}
+    try{ const t=JSON.parse(this.get(this.TS)||'{}'); if(t&&typeof t==='object') Object.keys(t).forEach(k=>{ if(typeof t[k]==='number') this.ts[k]=t[k]; }); }catch(e){}
+    try{ if(navigator.storage&&navigator.storage.persist) navigator.storage.persist().catch(()=>{}); }catch(e){}   // 브라우저가 저장소를 함부로 비우지 않게 부탁해요
+    this.idbAll().then(o=>{ const src={}; Object.keys(o).forEach(k=>{ if(o[k]&&typeof o[k].v==='string') src[k]=o[k]; });
+      const r=this.merge(src); this.KEYS.forEach(k=>{ const v=this.get(k); if(v!=null&&(!src[k]||src[k].v!==v)) this.idbPut(k,v); }); if(r.got) this.loaded(); });
+    addEventListener('pagehide',()=>{ if(this.dirty){ clearTimeout(this._ct); this.cloudPush(); } }); },
+};
+ST.boot();
 // 음악·효과음 크기 (브라우저에 저장)
 const VOL={m:.7,s:.85}; const VOL_LS='waffle-rush-audio-v1';
-try{ const o=JSON.parse(localStorage.getItem(VOL_LS)||'{}'); ['m','s'].forEach(k=>{ if(typeof o[k]==='number'&&o[k]>=0&&o[k]<=1) VOL[k]=o[k]; }); }catch(e){}
+function loadVol(){ try{ const o=JSON.parse(ST.get(VOL_LS)||'{}'); ['m','s'].forEach(k=>{ if(typeof o[k]==='number'&&o[k]>=0&&o[k]<=1) VOL[k]=o[k]; }); }catch(e){} }
+loadVol();
 function audio(){
   if(!AC){ try{ AC=new (window.AudioContext||window.webkitAudioContext)();
     const comp=AC.createDynamicsCompressor(); comp.threshold.value=-14; comp.ratio.value=3; comp.connect(AC.destination);
@@ -625,7 +687,7 @@ const T=THREE;
 const canvas=document.getElementById('c');
 // 그래픽: 자동(느리면 알아서 가볍게) / 선명하게 / 가볍게
 const GFX_LS='waffle-rush-gfx-v1';
-const GFX={mode:(()=>{ try{ const v=localStorage.getItem(GFX_LS); return v==='high'||v==='low'?v:'auto'; }catch(e){ return 'auto'; } })(), autoLow:false, low:false, shT:0};
+const GFX={mode:(()=>{ try{ const v=ST.get(GFX_LS); return v==='high'||v==='low'?v:'auto'; }catch(e){ return 'auto'; } })(), autoLow:false, low:false, shT:0};
 // 휴대폰·태블릿이나 코어·메모리가 적은 기기는 처음부터 가볍게 시작해요
 GFX.weak=(()=>{ try{ const n=navigator, coarse=matchMedia('(pointer:coarse)').matches; return coarse||(n.hardwareConcurrency||8)<=4||(n.deviceMemory||8)<=4; }catch(e){ return false; } })();
 GFX.autoLow=GFX.weak;
@@ -879,7 +941,8 @@ const keys={};
 const KEY_ACT=[['up','위로 이동','KeyW'],['down','아래로 이동','KeyS'],['left','왼쪽으로 이동','KeyA'],['right','오른쪽으로 이동','KeyD'],['interact','집기 · 놓기 · 썰기','KeyE'],['throw','재료 던지기','KeyF'],['dash','대시','ShiftLeft'],['pause','일시정지','Escape'],['swap','캐릭터 바꾸기 (2인용 맵 혼자)','Tab']];
 const KEY_LS='waffle-rush-keys-v1';
 const KB={}; KEY_ACT.forEach(([a,,d])=>KB[a]=d);
-try{ const o=JSON.parse(localStorage.getItem(KEY_LS)||'{}'); KEY_ACT.forEach(([a])=>{ if(typeof o[a]==='string'&&/^[A-Za-z0-9]{2,20}$/.test(o[a])) KB[a]=o[a]; }); }catch(e){}
+function loadKeys(){ try{ const o=JSON.parse(ST.get(KEY_LS)||'{}'); KEY_ACT.forEach(([a])=>{ if(o&&typeof o[a]==='string'&&/^[A-Za-z0-9]{2,20}$/.test(o[a])) KB[a]=o[a]; }); }catch(e){} }
+loadKeys();
 const normKey=c=>/^(Shift|Control|Alt|Meta)Right$/.test(c)?c.replace('Right','Left'):c;
 const kOn=a=>!!keys[KB[a]];
 function keyLabel(c){ if(!c) return '?'; const m={Space:'Space',Escape:'Esc',Tab:'Tab',ShiftLeft:'Shift',ControlLeft:'Ctrl',AltLeft:'Alt',MetaLeft:'Cmd',ArrowUp:'↑',ArrowDown:'↓',ArrowLeft:'←',ArrowRight:'→',Backspace:'⌫',CapsLock:'Caps',Comma:',',Period:'.',Slash:'/',Semicolon:';',Quote:"'",BracketLeft:'[',BracketRight:']',Minus:'-',Equal:'=',Backquote:'`',Backslash:'\\'};
@@ -897,7 +960,7 @@ const KEYS_UI={wait:null,from:'titleScr',
     const other=KEY_ACT.find(([o])=>o!==a&&KB[o]===c);
     if(other){ KB[other[0]]=KB[a]; toast(`'${other[1]}'와 키를 서로 바꿨어요`); }
     KB[a]=c; this.save(); this.render(); },
-  save(){ try{ localStorage.setItem(KEY_LS,JSON.stringify(KB)); }catch(e){} updKeyLabels(); },
+  save(){ ST.set(KEY_LS,JSON.stringify(KB)); updKeyLabels(); },
 };
 function resetGame(){
   recent=[]; time=GAME_TIME; score=0; combo=1; orders=[]; spawnT=0; elapsed=0; returns=[]; stats={served:0,failed:0,burnt:0};
@@ -1572,7 +1635,8 @@ function renderTitle(dt){ if(state!=='title'&&state!=='end') return; tT+=dt; tch
 /* ---------------- 화면 전환 ---------------- */
 const $=id=>document.getElementById(id);
 $('gfxSel').value=GFX.mode;
-$('gfxSel').onchange=e=>{ GFX.mode=e.target.value; try{ localStorage.setItem(GFX_LS,GFX.mode); }catch(er){} if(GFX.mode!=='auto'){ perf.step=GFX.mode==='low'?3:0; } else { GFX.autoLow=GFX.weak; perf.step=0; perf.n=0; perf.sum=0; } applyGfx(); };
+function setGfxMode(m){ GFX.mode=m; $('gfxSel').value=m; if(GFX.mode!=='auto'){ perf.step=GFX.mode==='low'?3:0; } else { GFX.autoLow=GFX.weak; perf.step=0; perf.n=0; perf.sum=0; } applyGfx(); }
+$('gfxSel').onchange=e=>{ setGfxMode(e.target.value); ST.set(GFX_LS,GFX.mode); };
 applyGfx();
 function show(id){ ['titleScr','pauseScr','endScr','coopScr','mapScr','helpScr','keyScr'].forEach(s=>$(s).hidden=s!==id); document.body.classList.toggle('inmenu',['titleScr','coopScr','mapScr','helpScr'].concat(state==='paused'||guestMenu?[]:['keyScr']).includes(id)); }
 $('helpBtn').onclick=()=>show('helpScr'); $('helpBack').onclick=()=>show('titleScr');
@@ -1637,7 +1701,7 @@ $('keyBack').onclick=()=>{ KEYS_UI.wait=null;
 $('keyReset').onclick=()=>{ KEY_ACT.forEach(([a,,d])=>KB[a]=d); KEYS_UI.save(); KEYS_UI.render(); toast('처음 설정으로 되돌렸어요'); };
 updKeyLabels();
 function volUI(){ $('volM').value=Math.round(VOL.m*100); $('volS').value=Math.round(VOL.s*100); $('volMv').textContent=$('volM').value+'%'; $('volSv').textContent=$('volS').value+'%'; }
-['M','S'].forEach(k=>$('vol'+k).addEventListener('input',e=>{ VOL[k.toLowerCase()]=e.target.value/100; volUI(); try{ localStorage.setItem(VOL_LS,JSON.stringify(VOL)); }catch(_){} audio(); if(k==='S') SFX.pick(); }));
+['M','S'].forEach(k=>$('vol'+k).addEventListener('input',e=>{ VOL[k.toLowerCase()]=e.target.value/100; volUI(); ST.set(VOL_LS,JSON.stringify(VOL)); audio(); if(k==='S') SFX.pick(); }));
 volUI();
 addEventListener('blur',()=>{ Object.keys(keys).forEach(k=>keys[k]=false); if(NET.mode==='solo') pause(true); });
 if(matchMedia('(pointer:coarse)').matches&&!matchMedia('(pointer:fine)').matches) $('touchNote').hidden=false;
@@ -2137,6 +2201,7 @@ const BUNDLE='WRMAPS:';
 function copyAllMaps(){ const l=lsGet(); if(!l.length){ toast('아직 내 맵이 없어요',true); return; } copyMapCode(BUNDLE+JSON.stringify(l.map(m=>[m.name,m.grid]))); }
 function importMapCode(){
   const raw=String($('mapCodeIn').value||'').trim();
+  if(raw.startsWith(SAVE_TAG)){ if(importSave(raw)) $('mapCodeIn').value=''; return; }
   if(raw.startsWith(BUNDLE)){ let arr=null; try{ arr=JSON.parse(raw.slice(BUNDLE.length)); }catch(e){}
     if(!Array.isArray(arr)){ toast('맵 코드가 올바르지 않아요',true); return; }
     const list=lsGet(); let n=0;
@@ -2150,18 +2215,18 @@ function importMapCode(){
   if(!ex){ list.unshift({id:newId(),name:'받은 맵',grid:g,at:Date.now(),up:false}); if(!lsSet(list)){ toast('이 브라우저에서는 저장할 수 없어요',true); return; } }
   $('mapCodeIn').value=''; MAPS.tab='mine'; MAPS.render(); toast(ex?'이미 내 맵에 있어요':'내 맵에 "받은 맵"으로 넣었어요');
 }
-const lsGet=()=>{ try{ const v=JSON.parse(localStorage.getItem(LS_KEY)||'[]'); return Array.isArray(v)?v.filter(m=>m&&validGridStr(m.grid)).map(m=>({id:String(m.id).slice(0,30),name:cleanName(m.name)||'이름 없는 맵',grid:m.grid,at:+m.at||0,up:!!m.up})):[]; }catch(e){ return []; } };
+const lsGet=()=>{ try{ const v=JSON.parse(ST.get(LS_KEY)||'[]'); return Array.isArray(v)?v.filter(m=>m&&validGridStr(m.grid)).map(m=>({id:String(m.id).slice(0,30),name:cleanName(m.name)||'이름 없는 맵',grid:m.grid,at:+m.at||0,up:!!m.up})):[]; }catch(e){ return []; } };
 // 저장할 때 이 버전에서 못 읽는 맵(앞으로 생길 형식 등)도 지우지 않고 그대로 둬요
-const lsSet=list=>{ try{ let keep=[]; try{ const v=JSON.parse(localStorage.getItem(LS_KEY)||'[]'); if(Array.isArray(v)) keep=v.filter(m=>m&&!validGridStr(m.grid)); }catch(_){}
-  localStorage.setItem(LS_KEY,JSON.stringify(list.slice(0,200).concat(keep))); return true; }catch(e){ return false; } };
+const lsSet=list=>{ try{ let keep=[]; try{ const v=JSON.parse(ST.get(LS_KEY)||'[]'); if(Array.isArray(v)) keep=v.filter(m=>m&&!validGridStr(m.grid)); }catch(_){}
+  return ST.set(LS_KEY,JSON.stringify(list.slice(0,200).concat(keep))); }catch(e){ return false; } };   // 이 버전이 모르는 칸이 든 맵도 지우지 않고 그대로 둬요
 
 const MAPS={
   db:null, user:null, uid:null, all:[], tab:'mine', unsub:null, loaded:false, sb:null, sbAt:0,
   shared(){ return !!(this.db&&this.uid||this.sb); },
   // 사이트: 공용 맵 저장소(Supabase). 이 브라우저만 아는 비밀값으로 내가 올린 맵만 고치거나 내릴 수 있어요
-  secret(){ try{ let k=localStorage.getItem('waffle-rush-secret-v1'); if(!k||k.length<16){ k=Array.from(crypto.getRandomValues(new Uint8Array(18)),b=>b.toString(16).padStart(2,'0')).join(''); localStorage.setItem('waffle-rush-secret-v1',k); } return k; }catch(e){ return null; } },
-  upIds(){ try{ const v=JSON.parse(localStorage.getItem('waffle-rush-up-v1')||'[]'); return Array.isArray(v)?v.map(String):[]; }catch(e){ return []; } },
-  setUp(id,on){ try{ const v=this.upIds().filter(x=>x!==id); if(on) v.unshift(id); localStorage.setItem('waffle-rush-up-v1',JSON.stringify(v.slice(0,300))); }catch(e){} },
+  secret(){ try{ let k=ST.get('waffle-rush-secret-v1'); if(!k||k.length<16){ k=Array.from(crypto.getRandomValues(new Uint8Array(18)),b=>b.toString(16).padStart(2,'0')).join(''); ST.set('waffle-rush-secret-v1',k); } return k; }catch(e){ return null; } },
+  upIds(){ try{ const v=JSON.parse(ST.get('waffle-rush-up-v1')||'[]'); return Array.isArray(v)?v.map(String):[]; }catch(e){ return []; } },
+  setUp(id,on){ try{ const v=this.upIds().filter(x=>x!==id); if(on) v.unshift(id); ST.set('waffle-rush-up-v1',JSON.stringify(v.slice(0,300))); }catch(e){} },
   async sbCall(path,body){ const c=this.sb, h={apikey:c.key}; if(/^eyJ/.test(c.key)) h.Authorization='Bearer '+c.key;   // 새 publishable 키(sb_publishable_)는 apikey 헤더로만 보내요
     if(body) h['Content-Type']='application/json';
     const r=await fetch(c.url+path,body?{method:'POST',headers:h,body:JSON.stringify(body)}:{headers:h});
@@ -2179,6 +2244,7 @@ const MAPS={
     try{ const c=window.claude; if(!c||typeof c.use!=='function') return;
       const db=await c.use('db'); if(!db) return; this.db=db;
       this.user=await c.use('user'); try{ this.uid=this.user?await this.user.id():null; }catch(e){}
+      ST.cloudInit(db,this.uid);
       this.unsub=db.collection('maps').onSnapshot(sn=>{ this.loaded=true; this.all=[];
         sn.docs.forEach(d=>{ const b=d.data(); const list=b&&Array.isArray(b.maps)?b.maps:[];
           list.slice(0,30).forEach(m=>{ if(m&&validGridStr(m.grid)&&checkMap(m.grid).valid) this.all.push({id:String(m.id).slice(0,30),name:cleanName(m.name)||'이름 없는 맵',grid:m.grid,at:+m.at||0,by:d.id}); }); });
@@ -2187,7 +2253,7 @@ const MAPS={
     }catch(e){}
   },
   showCur(){ $('curMapName').textContent=curMap.name+(MAP_DUO?` (${MAP_NEED}인용)`:''); },
-  select(m){ curMap={id:m.id,name:m.name,grid:m.grid}; buildKitchen(m.grid,true); this.showCur();
+  select(m){ curMap={id:m.id,name:m.name,grid:m.grid}; buildKitchen(m.grid,true); this.showCur(); saveCur();
     if(NET.mode==='host'&&NET.room){ NET.room.presence({mp:curMap.grid,mn:curMap.name.slice(0,20)}).catch(()=>{}); NET.assign(); NET.renderWait(); } },   // 방장이 방을 연 뒤에 맵을 바꿔도 친구들에게 전해요
   pick:false,
   open(pick){ this.pick=!!pick; show('mapScr'); this.render(); if(this.tab==='all') this.sbLoad(); },
@@ -2217,7 +2283,7 @@ const MAPS={
       btn('코드 복사','',()=>copyMapCode(m.grid));
       if(!this.pick) btn(m.mine?'편집':'복사해서 편집','',()=>ED.open(m.mine?m:{id:newId(),name:cleanName((m.id==='default'?'':m.name)+' 복사').trim()||'새 맵',grid:m.grid}));
       if(!this.pick&&m.mine&&this.shared()&&v.valid) btn(m.up?'다시 올리기':'모두에게 올리기','go',async ev=>{ const b=ev.currentTarget; b.disabled=true; await this.upload(m); this.render(); });
-      if(!this.pick&&m.mine) btn('삭제','del',()=>{ lsSet(lsGet().filter(x=>x.id!==m.id)); this.render(); });
+      if(!this.pick&&m.mine) btn('삭제','del',()=>{ lsSet(lsGet().filter(x=>x.id!==m.id)); ED.clearDraft(m.id); this.render(); });
       if(this.tab==='all'&&m.by===this.uid) btn('내리기','del',()=>this.unpublish(m.id));
       c.append(cv,t,a,row); list.appendChild(c);
     });
@@ -2256,10 +2322,12 @@ const ED={
   open(m){
     if(NET.mode!=='solo') return;
     this.prevMap=curMap; this.map={id:m.id,name:m.name,grid:m.grid}; this.grid=m.grid; this.undo=[]; this.dirty=false;
+    const d=this.draft(); let back=false; if(d&&d.id===m.id&&d.grid!==m.grid&&gDim(d.grid)){ this.grid=d.grid; m={id:m.id,name:cleanName(d.name)||m.name,grid:d.grid}; this.dirty=true; back=true; }   // 저장 전에 꺼진 편집을 되살려요
     toastT=0; toastEl.classList.remove('on');
     $('edName').value=m.name; themeLbl(); state='edit'; resize(); show(null); $('editUI').hidden=false; $('testBar').hidden=true;
     orders=[]; $('orders').innerHTML=''; players.forEach(p=>{ p.hold=null; });
     this.swRule=-1; this.swPick=null; this.feedSel=-1; this.propOpen=false; buildKitchen(this.grid,false); this.renderPal(); this.check(); this.renderProp();
+    if(back) setTimeout(()=>toast('저장하지 못하고 꺼졌던 편집을 되살렸어요'),50);
   },
   renderPal(){
     const el=$('edPal'); el.textContent='';
@@ -2300,7 +2368,9 @@ const ED={
     this.grid=g.join('')+ex; this.dirty=true;
     buildKitchen(this.grid,false); this.check(); this.autosave(); this.renderProp();
   },
-  autosave(){ try{ localStorage.setItem(LS_KEY+'-draft',JSON.stringify({id:this.map.id,name:this.name(),grid:this.grid})); }catch(e){} },
+  autosave(){ clearTimeout(this._as); this._as=setTimeout(()=>ST.set(LS_KEY+'-draft',JSON.stringify({id:this.map.id,name:this.name(),grid:this.grid,at:Date.now()})),250); },
+  draft(){ try{ const d=JSON.parse(ST.get(LS_KEY+'-draft')||'null'); return d&&typeof d.grid==='string'&&d.id?d:null; }catch(e){ return null; } },
+  clearDraft(id){ clearTimeout(this._as); const d=this.draft(); if(d&&(!id||d.id===id)) ST.set(LS_KEY+'-draft','null'); },
   tileAt(cx,cy){
     const r=canvas.getBoundingClientRect(); ndc.set((cx-r.left)/r.width*2-1,-(cy-r.top)/r.height*2+1); ray.setFromCamera(ndc,camera);
     if(ray.ray.intersectPlane(planeTop,hitP)){ const x=Math.round(hitP.x),y=Math.round(hitP.z); if(tiles[y]&&tiles[y][x]&&tiles[y][x].solid) return [x,y]; }
@@ -2409,7 +2479,7 @@ const ED={
   doUndo(){ const g=this.undo.pop(); if(!g) return; this.grid=g; buildKitchen(g,false); this.check(); this.autosave(); this.renderProp(); themeLbl(); },
   drawCursor(t){ const h=this.hover; if(!h){ sel.visible=false; return; } sel.visible=true; const solid=tiles[h[1]]&&tiles[h[1]][h[0]]&&tiles[h[1]][h[0]].solid; sel.position.set(h[0],solid?.93:.03,h[1]); const k=1+Math.sin(t*.008)*.03; sel.scale.set(k,1,k); },
   save(){ const list=lsGet(); const m={id:this.map.id,name:this.name(),grid:this.grid,at:Date.now(),up:false}; const i=list.findIndex(x=>x.id===m.id); if(i>=0){ m.up=list[i].up; list[i]=m; } else list.unshift(m);
-    this.map.name=m.name; this.dirty=false; if(lsSet(list)) toast('내 맵에 저장했어요'); else toast('이 브라우저에서는 저장할 수 없어요',true); return m; },
+    this.map.name=m.name; this.dirty=false; this.clearDraft(m.id); if(lsSet(list)) toast('내 맵에 저장했어요'); else toast('이 브라우저에서는 저장할 수 없어요',true); return m; },
   async upload(){
     if(!checkMap(this.grid).valid){ toast('맵을 먼저 완성해 주세요',true); return; }
     const m=this.save(); $('edUpload').disabled=true;
@@ -2426,10 +2496,10 @@ const ED={
     state='edit'; resize(); show(null); $('editUI').hidden=false; buildKitchen(this.grid,false); this.check();
   },
   exit(){
-    if(this.dirty) this.save();
+    if(this.dirty) this.save(); else this.clearDraft(this.map.id);
     this.testing=false; $('editUI').hidden=true; $('testBar').hidden=true; state='title'; resize();
     const v=checkMap(this.grid);
-    if(v.valid){ curMap={id:this.map.id,name:this.name(),grid:this.grid}; } else curMap=this.prevMap||{id:'default',name:'기본 주방',grid:DEFAULT_GRID};
+    if(v.valid){ curMap={id:this.map.id,name:this.name(),grid:this.grid}; } else curMap=this.prevMap||{id:'default',name:'기본 주방',grid:DEFAULT_GRID}; saveCur();
     buildKitchen(curMap.grid,true); MAPS.showCur(); MAPS.open();
   },
 };
@@ -2452,8 +2522,38 @@ $('makeBtn').onclick=()=>ED.open({id:newId(),name:'새 맵',grid:BLANK_GRID});
 $('newMapBtn').onclick=()=>ED.open({id:newId(),name:'새 맵',grid:BLANK_GRID});
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{ MAPS.tab=b.dataset.tab; MAPS.render(); if(MAPS.tab==='all') MAPS.sbLoad(); });
 MAPS.init();
+// 저장 파일 / 저장 코드
+const SAVE_TAG='WRSAVE:';
+function saveCode(){ return SAVE_TAG+JSON.stringify({app:'waffle-rush',v:1,at:Date.now(),kv:ST.dump(true)}); }
+function importSave(raw){ raw=String(raw||'').trim(); if(raw.startsWith(SAVE_TAG)) raw=raw.slice(SAVE_TAG.length); let o=null; try{ o=JSON.parse(raw); }catch(e){}
+  if(!o||o.app!=='waffle-rush'||!o.kv||typeof o.kv!=='object'){ toast('저장 코드가 올바르지 않아요',true); return false; }
+  const kv={}; ['waffle-rush-audio-v1','waffle-rush-gfx-v1','waffle-rush-keys-v1','waffle-rush-cur-v1'].forEach(k=>{ if(o.kv[k]) kv[k]=o.kv[k]; });
+  ST.merge(kv,true); ST.merge({'waffle-rush-secret-v1':o.kv['waffle-rush-secret-v1'],'waffle-rush-up-v1':o.kv['waffle-rush-up-v1']});
+  // 맵은 덮어쓰지 않고 합쳐요 (같은 맵이면 더 최근 것)
+  let n=0; try{ const mk=o.kv[LS_KEY]; const inc=mk&&typeof mk.v==='string'?JSON.parse(mk.v):[]; let cur=[]; try{ cur=JSON.parse(ST.get(LS_KEY)||'[]'); }catch(e){} if(!Array.isArray(cur)) cur=[];
+    if(Array.isArray(inc)) inc.slice(0,200).forEach(m=>{ if(!m||typeof m.grid!=='string'||!m.id) return; const i=cur.findIndex(x=>x&&x.id===m.id); if(i<0){ cur.push(m); n++; } else if((+m.at||0)>(+cur[i].at||0)){ cur[i]=m; n++; } });
+    if(n) ST.set(LS_KEY,JSON.stringify(cur.slice(0,240))); }catch(e){}
+  ST.loaded(); toast(n?`저장을 불러왔어요 (맵 ${n}개)`:'저장을 불러왔어요'); return true; }
+$('saveCopyBtn').onclick=()=>{ const c=saveCode(); const fall=()=>{ const i=$('saveCodeIn'); i.value=c; i.focus(); i.select(); toast('아래 칸의 코드를 복사해 두세요'); };
+  try{ navigator.clipboard.writeText(c).then(()=>toast('저장 코드를 복사했어요. 메모장 같은 곳에 붙여 두세요'),fall); }catch(e){ fall(); } };
+$('saveFileBtn').onclick=()=>{ try{ const b=new Blob([saveCode()],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); const d=new Date(); a.download=`waffle-rush-save-${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),4000); toast('저장 파일을 받았어요'); }catch(e){ $('saveCopyBtn').onclick(); } };
+$('saveLoadBtn').onclick=()=>$('saveFile').click();
+$('saveFile').onchange=e=>{ const f=e.target.files&&e.target.files[0]; e.target.value=''; if(!f) return; if(f.size>1e6){ toast('파일이 너무 커요',true); return; } f.text().then(importSave,()=>toast('파일을 읽지 못했어요',true)); };
+$('saveCodeBtn').onclick=()=>{ if(importSave($('saveCodeIn').value)) $('saveCodeIn').value=''; };
+// 저장된 맵 선택 되살리기
+function saveCur(){ if(curMap&&curMap.id!=='remote') ST.set('waffle-rush-cur-v1',JSON.stringify({id:curMap.id,name:curMap.name,grid:curMap.grid})); }
+function restoreCur(){ if(NET.mode!=='solo'||state!=='title') return; try{ const c=JSON.parse(ST.get('waffle-rush-cur-v1')||'null');
+  if(!c||!validGridStr(c.grid)||c.grid===curMap.grid||!checkMap(c.grid).valid) return; curMap={id:String(c.id).slice(0,30),name:cleanName(c.name)||'내 맵',grid:c.grid}; buildKitchen(c.grid,true); MAPS.showCur(); }catch(e){} }
+// 백업·계정에서 값을 되살렸을 때 화면에 다시 반영해요
+ST.onLoad=()=>{ loadVol(); volUI(); if(AC) audio(); loadKeys(); updKeyLabels(); if(!$('keyScr').hidden) KEYS_UI.render();
+  const g=ST.get(GFX_LS), gm=g==='high'||g==='low'?g:'auto'; if(gm!==GFX.mode) setGfxMode(gm);
+  if(!$('mapScr').hidden) MAPS.render(); restoreCur(); ST.info(); };
+// 저장하지 않고 꺼진 새 맵은 내 맵에 되살려 둬요
+(()=>{ const d=ED.draft(); if(!d||!validGridStr(d.grid)||d.grid===BLANK_GRID) return; const list=lsGet(); if(list.some(m=>m.id===d.id)) return;
+  list.unshift({id:String(d.id).slice(0,30),name:(cleanName(d.name)||'새 맵')+' (되살림)',grid:d.grid,at:+d.at||Date.now(),up:false}); lsSet(list); })();
+restoreCur(); ST.info();
 
 // 테스트용 훅
-window.__game={get MUS(){return MUS},get AC(){return AC},get SW(){return SW},gMake,gExt,get tiles(){return tiles},renderOrders:()=>renderOrders(),get flyers(){return flyers},get floorItems(){return floorItems},throwKey,get ED(){return ED},get MAPS(){return MAPS},get curMap(){return curMap},get stationsL(){return stations},checkMap,renderer,scene,camera,get state(){return state},get player(){return L()},players,get stations(){return stations},orders:()=>orders,act:()=>action(L()),interact,keys,setTime:v=>time=v,get score(){return score},testEnd:(sc,f,b)=>{score=sc;stats.failed=f;stats.burnt=b;endGame();},testOrder:n=>{ orders.length=0; orders.push({r:RECIPES.find(r=>r.name===n),t:60,max:60,id:999}); renderOrders(); },get S(){return S},NET:()=>NET};
+window.__game={KB,KEYS_UI,ST,saveCode,SKY_GRID,get ED(){return ED},get MUS(){return MUS},get AC(){return AC},get SW(){return SW},gMake,gExt,get tiles(){return tiles},renderOrders:()=>renderOrders(),get flyers(){return flyers},get floorItems(){return floorItems},throwKey,get ED(){return ED},get MAPS(){return MAPS},get curMap(){return curMap},get stationsL(){return stations},checkMap,renderer,scene,camera,get state(){return state},get player(){return L()},players,get stations(){return stations},orders:()=>orders,act:()=>action(L()),interact,keys,setTime:v=>time=v,get score(){return score},testEnd:(sc,f,b)=>{score=sc;stats.failed=f;stats.burnt=b;endGame();},testOrder:n=>{ orders.length=0; orders.push({r:RECIPES.find(r=>r.name===n),t:60,max:60,id:999}); renderOrders(); },get S(){return S},NET:()=>NET};
 })();
 </script>
