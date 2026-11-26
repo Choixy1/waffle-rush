@@ -1775,7 +1775,8 @@ function action(p,noFloor){
     }
     case 'trash':{
       if(!h) return null;
-      if(h.k==='plate'||h.k==='cup'){ const nm=h.k==='cup'?'유리컵':'접시'; if(h.dirty) return Wn(`더러운 ${nm}은 설거지해요`);
+      if(h.k==='plate'||h.k==='cup'){ const nm=h.k==='cup'?'유리컵':'접시';
+        if(h.dirty) return binDish(h,true)?A(`더러운 ${nm} 반납대로 보내기`,()=>{ binDish(h); p.hold=null; }):Wn(`더러운 ${nm}은 설거지해요`);
         // 음식은 버리고 그릇은 그릇 자리(접시 선반·컵 선반)로 돌아가요
         if(binDish(h,true)) return A(h.food.length?`버리고 ${nm} 돌려놓기`:`${nm} 돌려놓기`,()=>{ binDish(h); p.hold=null; });
         return h.food.length?A(`${nm} 비우기`,()=>{h.food=[];}):Wn(`빈 ${nm}이에요`); }
@@ -1899,13 +1900,19 @@ function movePlayer(player,dt){
   const il=Math.hypot(ix,iz); if(il){ ix/=il; iz/=il; if(player.dashT<=0){ player.fx=ix; player.fz=iz; } }
   player.dashCd-=dt;
   if(player.dashT>0){ player.dashT-=dt; player.vx=player.fx*12; player.vz=player.fz*12; if(Math.random()<.6) puff(player.x,.1,player.z,'#ffffff',.08,.3,.4); }
-  else { const sp=4.3, k=Math.min(1,dt*16); player.vx+=(ix*sp-player.vx)*k; player.vz+=(iz*sp-player.vz)*k; }
+  else { const sp=4.3, k=Math.min(1,dt*28); player.vx+=(ix*sp-player.vx)*k; player.vz+=(iz*sp-player.vz)*k; }
   player.x+=player.vx*dt; player.z+=player.vz*dt; collide(player);
   player.walk+=Math.hypot(player.vx,player.vz)*dt;
   player.target=findTarget(player);
 }
 // 다른 사람 캐릭터는 받은 위치로 부드럽게 따라가요
-function followRemote(p,dt){ const k=Math.min(1,dt*14); p.x+=(p.tx-p.x)*k; p.z+=(p.tz-p.z)*k; if(Math.hypot(p.tx-p.x,p.tz-p.z)>2.5){ p.x=p.tx; p.z=p.tz; } }
+function followRemote(p,dt){ const now=performance.now();
+  if(p.tx!==p._ltx||p.tz!==p._ltz){ const el=(now-(p._lt||0))/1000;
+    if(el>.015&&el<.4&&p._ltx!=null){ p.rvx=(p.tx-p._ltx)/el; p.rvz=(p.tz-p._ltz)/el; const sp=Math.hypot(p.rvx,p.rvz); if(sp>13){ p.rvx*=13/sp; p.rvz*=13/sp; } } else { p.rvx=p.rvz=0; }
+    p._ltx=p.tx; p._ltz=p.tz; p._lt=now; }
+  const age=(now-(p._lt||now))/1000; if(age>.25){ p.rvx=p.rvz=0; }
+  const lead=Math.min(age,.09)+.03, ex=Math.max(.5,Math.min(MW-1.5,p.tx+(p.rvx||0)*lead)), ez=Math.max(.5,Math.min(MH-1.5,p.tz+(p.rvz||0)*lead));
+  const k=Math.min(1,dt*20); p.x+=(ex-p.x)*k; p.z+=(ez-p.z)*k; if(Math.hypot(p.tx-p.x,p.tz-p.z)>2.5){ p.x=p.tx; p.z=p.tz; } }
 // 김·연기 같은 꾸밈 효과 (방장, 친구 모두)
 function ambient(dt){
   stations.forEach(s=>{
@@ -2071,7 +2078,10 @@ function nearFloor(p){
 }
 // 쓰레기통에 넣은 깨끗한 그릇: 음식은 버리고 그릇 자리로 돌려보내요 (check=true면 가능한지만 봐요)
 function binDish(it,check){
-  if(!it||it.dirty||(it.k!=='plate'&&it.k!=='cup')) return false;
+  if(!it||(it.k!=='plate'&&it.k!=='cup')) return false;
+  // 더러운 그릇은 반납대(더러운 그릇이 나오는 곳)로 가요
+  if(it.dirty){ const r=S.ret; if(!r) return false; if(check) return true; const key=it.k==='cup'?'cup':'item', n=Math.max(1,it.n|0);
+    if(r[key]) r[key].n+=n; else r[key]={k:it.k,n,dirty:true,food:[]}; sfx('place'); return true; }
   const home=it.k==='cup'?S.cup:S.rack; if(!home) return false;
   if(!check){ home.count+=Math.max(1,it.n|0); sfx('place'); }
   return true;
@@ -2741,7 +2751,7 @@ const NET={
   },
   hostPush(dt){
     if(this.mode!=='host'||!this.room) return;
-    this.pushT-=dt; if(dt<1&&this.pushT>0) return; this.pushT=this.room&&this.room.relay?1/10:1/15;   // 중계로 연결된 친구가 있으면 1초에 10번만 보내요 (무료 한도)
+    this.pushT-=dt; if(dt<1&&this.pushT>0) return; this.pushT=this.room&&this.room.relay?1/10:this.p2p?1/20:1/15;   // 중계로 연결된 친구가 있으면 1초에 10번만 보내요 (무료 한도)
     // 방 정보(맵·자리)와 합쳐 4KB를 넘지 않게 상태 크기를 맞춰요
     const base=u8len(JSON.stringify({role:'host',mp:curMap.grid,mn:curMap.name.slice(0,20),sl:this.slots,g:0}));
     this.room.presence({g:snap(Math.max(900,3900-base))}).catch(()=>{});
@@ -2784,7 +2794,7 @@ const NET={
         const g=h.presence.g; if(g&&g!==this.lastG){ this.lastG=g; applySnap(g); } }
       if(state==='play') players.forEach((p,i)=>{ if(i!==me&&p.active) followRemote(p,dt); });
       this.sendT-=dt;
-      if(this.sendT<=0){ this.sendT=this.room&&this.room.relay?1/10:1/15; const P=L();
+      if(this.sendT<=0){ this.sendT=this.room&&this.room.relay?1/10:this.p2p?1/20:1/15; const P=L();
         this.room.presence({p:[r2(P.x),r2(P.z),r2(P.fx),r2(P.fz),P.anim,P.target?stations.indexOf(P.target):-1],a:this.acts}).catch(()=>{}); }
     }
   }
