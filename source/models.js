@@ -381,6 +381,21 @@ const beltTex=canvasTex(128,256,(x,w,h)=>{ x.fillStyle='#3d4150'; x.fillRect(0,0
     x.strokeStyle='#f2c45a'; x.lineWidth=9; x.lineCap='round'; x.lineJoin='round'; x.beginPath(); x.moveTo(w*.3,y+h/8+16); x.lineTo(w*.5,y+h/8-8); x.lineTo(w*.7,y+h/8+16); x.stroke(); } });
 beltTex.wrapS=beltTex.wrapT=T.RepeatWrapping;
 const beltMat=new T.MeshStandardMaterial({map:beltTex,roughness:.9});
+/* 바닥 칸: 사람을 미는 바닥 벨트, 미끄러운 빙판, (가게 테마의) 구멍 */
+const floorBeltTex=beltTex.clone(); floorBeltTex.needsUpdate=true; floorBeltTex.wrapS=floorBeltTex.wrapT=T.RepeatWrapping;
+const floorBeltMat=new T.MeshStandardMaterial({map:floorBeltTex,roughness:.9});
+const iceTex=canvasTex(128,128,(x,w,h)=>{ const g=x.createLinearGradient(0,0,w,h); g.addColorStop(0,'#e4f6ff'); g.addColorStop(1,'#b9e3fb'); x.fillStyle=g; x.fillRect(0,0,w,h);
+  x.strokeStyle='rgba(255,255,255,.85)'; x.lineWidth=5; x.lineCap='round'; x.beginPath(); x.moveTo(22,40); x.lineTo(52,18); x.moveTo(30,56); x.lineTo(44,46); x.moveTo(78,104); x.lineTo(108,82); x.stroke();
+  x.strokeStyle='rgba(120,180,220,.5)'; x.lineWidth=3; x.strokeRect(2,2,w-4,h-4); });
+function makeFloorTile(kind,dir){
+  const g=new T.Group();
+  if(kind==='belt'){ const d=dir||[1,0], tr=new T.Group(); tr.rotation.y=Math.atan2(-d[0],-d[1]); g.add(tr);
+    const pl=new T.Mesh(G('fbeltpl',()=>{ const p=new T.PlaneGeometry(.94,1); p.rotateX(-Math.PI/2); return p; }),floorBeltMat); pl.position.y=.006; pl.receiveShadow=true; tr.add(pl);
+    [-1,1].forEach(sx=>tr.add(mesh(rbox(.05,.03,1,.012,.008),mat(PAL.gold),sx*.475,.016,0,false))); }
+  else if(kind==='ice'){ const pl=new T.Mesh(G('icepl',()=>{ const p=new T.PlaneGeometry(1,1); p.rotateX(-Math.PI/2); return p; }),new T.MeshStandardMaterial({map:iceTex,roughness:.25,metalness:0})); pl.position.y=.005; pl.receiveShadow=true; g.add(pl); }
+  else if(kind==='hole'){ const pl=new T.Mesh(G('holepl',()=>{ const p=new T.PlaneGeometry(1,1); p.rotateX(-Math.PI/2); return p; }),flat('#151a28')); pl.position.y=-.001; g.add(pl); }
+  return g;
+}
 function makeStation(type,opt){
   opt=opt||{};
   const g=new T.Group(), holder=new T.Group(); holder.position.y=TOP_Y; g.add(holder); const parts={};
@@ -582,5 +597,5 @@ function lowOf(m){ if(!m||!m.isMeshStandardMaterial) return m; let l=lowC.get(m)
   return l; }
 const hiOf=m=>m&&m.userData&&m.userData.hi||m;
 function setLowMat(root,on){ const f=on?lowOf:hiOf; root.traverse(o=>{ if(!o.isMesh||!o.material) return; o.material=Array.isArray(o.material)?o.material.map(f):f(o.material); }); }
-window.WK={setLowMat,setBlender,cupMesh,beltTex,bake,T,PAL,lin,mat,toon:mat,flat,mesh,rbox,cyl,sph,circ,makeChef,makeStation,setMachine,setMixer,itemMesh,plateMesh,waffleMesh,makeFloor,setupRenderer,setupLights,ICON,TEX};
+window.WK={floorBeltTex,makeFloorTile,setLowMat,setBlender,cupMesh,beltTex,bake,T,PAL,lin,mat,toon:mat,flat,mesh,rbox,cyl,sph,circ,makeChef,makeStation,setMachine,setMixer,itemMesh,plateMesh,waffleMesh,makeFloor,setupRenderer,setupLights,ICON,TEX};
 })();

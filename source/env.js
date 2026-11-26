@@ -187,5 +187,71 @@ function makeEnvironment(KW,KH,opt){
 }
 // 웹폰트가 늦게 받아지면 간판 글씨를 다시 그려요
 window.WK.refreshText=()=>TEXT_TEX.forEach(o=>{ const x=o.cv.getContext('2d'); x.clearRect(0,0,o.cv.width,o.cv.height); o.draw(x,o.cv.width,o.cv.height); o.t.needsUpdate=true; });
-window.WK.makeCustomer=makeCustomer; window.WK.makeEnvironment=makeEnvironment;
+
+/* ---------------- 하늘 테마: 열기구 바구니 안 주방 ---------------- */
+const wickerTex=canvasTex(128,128,(x,w,h)=>{ x.fillStyle='#b27a3e'; x.fillRect(0,0,w,h);
+  for(let j=0;j<8;j++) for(let i=0;i<8;i++){ const o=(i+j)%2; x.fillStyle=o?'#c98d4c':'#9c6632'; x.fillRect(i*16+1,j*16+(o?1:5),14,10); x.fillStyle='rgba(255,240,200,.25)'; x.fillRect(i*16+2,j*16+(o?2:6),12,2); }
+  x.fillStyle='rgba(60,30,10,.35)'; for(let i=0;i<8;i++) x.fillRect(i*16,0,1.5,h); });
+wickerTex.wrapS=wickerTex.wrapT=T.RepeatWrapping;
+function envelopeTex(a,b){ return canvasTex(256,128,(x,w,h)=>{ const n=8; for(let i=0;i<n;i++){ x.fillStyle=i%2?a:b; x.fillRect(i*w/n,0,w/n+1,h); } x.fillStyle='rgba(255,255,255,.18)'; x.fillRect(0,h*.18,w,6); }); }
+// 열기구 하나 (풍선 + 줄 + 바구니), 바구니 윗면 높이 = 0
+function balloon(r,cols,basket){ const g=new T.Group();
+  const tex=envelopeTex(cols[0],cols[1]); tex.wrapS=T.RepeatWrapping;
+  const env=new T.Mesh(geo('env'+r,()=>{ const pts=[]; for(let i=0;i<=16;i++){ const t=i/16, a=-Math.PI/2+t*Math.PI; const rr=Math.cos(a)*r*(t<.5?.62+t*.76:1), y=Math.sin(a)*r*1.12; pts.push(new T.Vector2(Math.max(.001,rr),y)); } return new T.LatheGeometry(pts,24); }),tmat(tex,{roughness:.9}));
+  env.position.y=basket*1.2+r*1.5; g.add(env);
+  const ring=mesh(cyl(r*.32,r*.32,.08,20),mat('#6b4a2a'),0,env.position.y-r*1.1,0); g.add(ring);
+  const bw=basket*1.1; [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([sx,sz])=>{ const a=new T.Vector3(sx*bw*.45,0,sz*bw*.45), b=new T.Vector3(sx*r*.3,ring.position.y,sz*r*.3); const d=b.clone().sub(a); const L=d.length();
+    const rope=mesh(cyl(.018,.018,L,5),mat('#5b4127'),0,0,0,false); rope.position.copy(a).add(b).multiplyScalar(.5); rope.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),d.normalize()); g.add(rope); });
+  const bk=new T.Mesh(geo('bk'+basket,()=>new T.BoxGeometry(bw,basket*.7,bw)),tmat(wickerTex)); bk.position.y=-basket*.35; g.add(bk);
+  g.add(mesh(rbox(bw+.08,.08,bw+.08,.03,.02),mat('#7a4e25'),0,0,0));
+  const fl=new T.Mesh(sph(r*.14,10),new T.MeshBasicMaterial({color:0xffa53a,transparent:true,opacity:.85})); fl.position.y=ring.position.y+.15; fl.userData.dyn=true; g.add(fl);
+  return {g,fl}; }
+function cloud(s,seed){ const g=new T.Group(); const m=mat('#ffffff',{roughness:1}); let sd=seed;
+  const r=()=>{ sd=(sd*9301+49297)%233280; return sd/233280; };
+  for(let i=0;i<5;i++){ const b=mesh(sph(.5+r()*.5,10),m,(i-2)*.7*s,r()*.3*s,(r()-.5)*.6*s,false); b.scale.setScalar(s); b.receiveShadow=false; g.add(b); }
+  g.userData.dyn=true; return g; }
+function makeSkyEnvironment(KW,KH,opt){
+  opt=opt||{};
+  const root=new T.Group(); const upd=[];
+  const L=-.5, R=KW-.5, B=-.5, F=KH-.5;
+  // 우리 주방을 둘러싼 바구니 벽 (바닥 아래로 내려가요)
+  const wt=wickerTex.clone(); wt.needsUpdate=true; wt.wrapS=wt.wrapT=T.RepeatWrapping;
+  const wall=(w,d,x,z,rw)=>{ const t=wt.clone(); t.needsUpdate=true; t.repeat.set(rw,1.4); const m=new T.Mesh(new T.BoxGeometry(w,1.6,d),tmat(t)); m.position.set(x,-.75,z); m.receiveShadow=true; root.add(m); };
+  wall(KW+.6,.3,(KW-1)/2,B-.15,KW/1.4); wall(KW+.6,.3,(KW-1)/2,F+.15,KW/1.4); wall(.3,KH,L-.15,(KH-1)/2,KH/1.4); wall(.3,KH,R+.15,(KH-1)/2,KH/1.4);
+  root.add(mesh(rbox(KW+.7,.1,.4,.04,.02),mat('#7a4e25'),(KW-1)/2,.04,B-.15)); root.add(mesh(rbox(KW+.7,.1,.4,.04,.02),mat('#7a4e25'),(KW-1)/2,.04,F+.15));
+  root.add(mesh(rbox(.4,.1,KH+.3,.04,.02),mat('#7a4e25'),L-.15,.04,(KH-1)/2)); root.add(mesh(rbox(.4,.1,KH+.3,.04,.02),mat('#7a4e25'),R+.15,.04,(KH-1)/2));
+  // 우리 풍선으로 올라가는 굵은 줄 (네 귀퉁이)
+  [[L-.15,B-.15],[R+.15,B-.15],[L-.15,F+.15],[R+.15,F+.15]].forEach(([x,z])=>{ const a=new T.Vector3(x,0,z), b=new T.Vector3((KW-1)/2+(x<KW/2?-1.5:1.5),16,(KH-1)/2-6); const d=b.clone().sub(a), Ln=d.length();
+    const rope=mesh(cyl(.035,.035,Ln,6),mat('#5b4127'),0,0,0,false); rope.position.copy(a).add(b).multiplyScalar(.5); rope.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),d.normalize()); root.add(rope); });
+  // 우리 열기구 풍선 (뒤쪽 위)
+  { const tex=envelopeTex('#e5484d','#fff1d6'); const big=new T.Mesh(new T.SphereGeometry(7,24,16),tmat(tex,{roughness:.9})); big.position.set((KW-1)/2,17,(KH-1)/2-9); big.scale.set(1,1.1,1); root.add(big); }
+  // 손님 바구니에 붙은 발판 (서빙대 쪽, 오른쪽)
+  const serveZ=opt.serveZ!=null?opt.serveZ:1.5;
+  const deck=new T.Group(); root.add(deck);
+  deck.add(mesh(rbox(3.2,.12,2.6,.05,.03),mat('#c98a4f'),KW+1.1,-.06,serveZ+.1));
+  for(let i=0;i<5;i++) deck.add(mesh(rbox(.06,.5,.06,.02,.01),mat('#7a4e25'),KW-.3+i*.72,.25,serveZ+1.35));
+  deck.add(mesh(rbox(3.0,.06,.08,.02,.01),mat('#7a4e25'),KW+1.1,.5,serveZ+1.35));
+  deck.add(mesh(rbox(3.0,.06,.08,.02,.01),mat('#7a4e25'),KW+1.1,.5,serveZ-1.15));
+  // 손님 열기구 (오른쪽·뒤쪽에 둥둥) — 안에서 와플을 먹어요
+  const seated=[], bobs=[];
+  const spots=[[KW+5.2,1.2,-.8,1.6,['#2456c4','#ffffff']],[KW+4.6,KH-1.2,-1.4,1.4,['#f7b52c','#fff1d6']],[-4.4,KH*.45,-1.8,1.5,['#45b26b','#ffffff']],[KW*.55,-5.5,-2.6,1.5,['#8a6bd6','#fff1d6']]];
+  spots.forEach(([x,z,y,bs,cols],k)=>{ const b=balloon(2.4,cols,bs); b.g.position.set(x,y,z); b.g.userData.dyn=true; root.add(b.g);
+    const tb=mesh(cyl(.32,.32,.05,14),mat('#fffaf0'),0,.42,0); b.g.add(tb); b.g.add(mesh(cyl(.05,.05,.42,8),mat('#7a4e25'),0,.21,0));
+    const p=itemMesh({k:'plate',n:1,food:k%2?['waffle','syrup','banana']:['waffle','cream','strawberry']}); p.scale.setScalar(.6); p.position.set(0,.46,0); b.g.add(p);
+    [[-.5,0,Math.PI/2],[.5,0,-Math.PI/2]].forEach(([ox,oz,r],ci)=>{ const c=makeCustomer(700+k*11+ci*5); c.root.position.set(ox,0,oz); c.root.rotation.y=r; c.st.mode='sit'; b.g.add(c.root); seated.push(c); });
+    bobs.push({g:b.g,y,ph:k*1.7,fl:b.fl}); });
+  seated.forEach(c=>upd.push(dt=>c.update(dt)));
+  upd.push((dt,tt)=>bobs.forEach(o=>{ o.g.position.y=o.y+Math.sin(tt*.7+o.ph)*.18; o.fl.scale.setScalar(.85+Math.abs(Math.sin(tt*9+o.ph))*.3); }));
+  // 구름 (아래와 옆에서 천천히 흘러가요)
+  const clouds=[]; for(let i=0;i<14;i++){ const s=.8+((i*37)%10)/8; const c=cloud(s,i*13+5); const below=i<9;
+    c.position.set(-10+((i*7.3)%(KW+20)),below?-4-((i*3)%4):-1.2+((i*5)%3),below?((i*5.7)%(KH+10))-5:(i%2?-7:KH+5)); root.add(c); clouds.push({c,v:.25+((i*11)%5)/12}); }
+  upd.push(dt=>clouds.forEach(o=>{ o.c.position.x+=o.v*dt; if(o.c.position.x>KW+14) o.c.position.x=-14; }));
+  // 줄 선 손님 (발판 위)
+  const queue=[]; for(let i=0;i<3;i++){ const c=makeCustomer(101+i*17); c.root.position.set(KW+.15+i*.72,0,serveZ+(i%2?.25:-.1)); c.root.rotation.y=-Math.PI/2; c.st.mode='wait'; root.add(c.root); queue.push(c); upd.push(dt=>c.update(dt)); }
+  const bub=makeBubble('waffle'); bub.position.set(0,1.15,0); queue[0].root.add(bub);
+  upd.push((dt,tt)=>{ bub.position.y=1.15+Math.sin(tt*3)*.04; });
+  root.traverse(o=>{ if(o.isMesh&&o.material&&o.material.isMeshBasicMaterial) o.castShadow=false; });
+  return {root,update:(dt,tt)=>upd.forEach(f=>f(dt,tt)),bounds:{L,R,B,F},queue,sky:true};
+}
+window.WK.makeCustomer=makeCustomer; window.WK.makeEnvironment=makeEnvironment; window.WK.makeSkyEnvironment=makeSkyEnvironment;
 })();
