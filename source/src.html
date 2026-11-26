@@ -305,7 +305,7 @@ kbd{font-family:var(--font)!important;font-weight:900;letter-spacing:.5px}
     <div class="logo">
       <div class="logo-badge" aria-hidden="true"><svg viewBox="0 0 64 64"><rect x="6" y="6" width="52" height="52" rx="14" fill="#f7b52c" stroke="#8a5a07" stroke-width="4"/><path d="M6 23h52M6 41h52M23 6v52M41 6v52" stroke="#c98712" stroke-width="4"/><path d="M14 14h4M32 14h4M50 14h0" stroke="#ffe28a" stroke-width="3" stroke-linecap="round"/></svg></div>
       <h1><span class="w1">와플</span><span class="w2">대소동</span></h1>
-      <div class="ribbon"><span>6분 와플 영업 대작전!</span></div>
+      <div class="ribbon"><span>5분 와플 영업 대작전!</span></div>
     </div>
     <div class="stage">
       <div class="mascot">
@@ -334,7 +334,7 @@ kbd{font-family:var(--font)!important;font-weight:900;letter-spacing:.5px}
 <div class="screen" id="helpScr" hidden>
   <div class="panel help" style="max-width:820px">
     <div class="big" style="font-size:40px">게임 방법</div>
-    <p class="sub" style="text-align:center;margin:0">6분 동안 주문 들어온 와플을 만들어 서빙해요. 빨리 낼수록 팁이 붙고, 오래 두면 와플이 타요!</p>
+    <p class="sub" style="text-align:center;margin:0">5분 동안 주문 들어온 와플을 만들어 서빙해요. 빨리 낼수록 팁이 붙고, 오래 두면 와플이 타요!</p>
     <div class="hsteps">
       <div><em>1</em><b>반죽 굽기</b><span>반죽을 와플기계에 넣고 기다려요. 믹서에 반죽+초코칩이면 초코 반죽!</span></div>
       <div><em>2</em><b>재료 썰기</b><span>딸기, 바나나, 초콜릿은 도마에서 <b data-k="interact">E</b>를 꾹꾹 눌러 썰어요</span></div>
@@ -456,7 +456,7 @@ kbd{font-family:var(--font)!important;font-weight:900;letter-spacing:.5px}
 
 /* ---------------- 설정 ---------------- */
 const BLEND=6, TOTAL_CUPS=3, CHOCO_FAST=5;
-const GAME_TIME=360, MIX=10, COOK=17.5, WARN=20.5, BURN=24.5, CHOP=2.25, WASH=1.6, RETURN_DELAY=6, TOTAL_PLATES=4;
+const GAME_TIME=300, MIX=10, COOK=17.5, WARN=20.5, BURN=24.5, CHOP=2.25, WASH=1.6, RETURN_DELAY=6, TOTAL_PLATES=4;
 const STAR_BASE=[150,260,375,490,600];
 // 같이 하면 별 기준을 조금 올려요 (2인 +5%, 3인 +12%, 4인 +20%)
 const starGoals=()=>{ const crew=NET.mode==='solo'?1:players.filter(p=>p.active).length; const k=[1,1,1.05,1.12,1.2][crew]||1; return STAR_BASE.map(g=>Math.round(g*k/5)*5); };
