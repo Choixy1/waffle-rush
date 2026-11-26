@@ -687,7 +687,7 @@ const FEED_CH={milk:'M',batter:'B',cream:'R',syrup:'Y',cheese:'C',choco:'H',stra
 function gExt(g){ const e={s:[],b:1,f:[]}; const d=gDim(g); if(d){ e.w=d.w; e.h=d.h; } if(typeof g!=='string') return e;
   const NL=gBase(g).length; if(g.length<=NL+1) return e;
   try{ const o=JSON.parse(g.slice(NL+1)); if(!o||typeof o!=='object') return e;
-    if([.6,1,1.6].includes(o.b)) e.b=o.b;
+    if([.6,1,1.6,2.4,3.4].includes(o.b)) e.b=o.b;
     if(o.th==='sky') e.th='sky';
     if(Array.isArray(o.f)){ const seen=new Set(); e.f=o.f.slice(0,8).filter(f=>f&&Number.isInteger(f.c)&&f.c>=0&&f.c<NL&&FEED_K.includes(f.k)&&!seen.has(f.c)&&seen.add(f.c)).map(f=>({c:f.c,k:f.k,t:Math.max(2,Math.min(60,Math.round(+f.t||8)))})); }
     if(Array.isArray(o.s)) e.s=o.s.slice(0,4).map(r=>{ const cl=a=>Array.isArray(a)?[...new Set(a.filter(i=>Number.isInteger(i)&&i>=0&&i<NL))].slice(0,24):[];
@@ -1165,7 +1165,7 @@ function movePlayer(player,dt,noInput){
   if(player.dashT>0){ player.dashT-=dt; player.vx=player.fx*12; player.vz=player.fz*12; if(Math.random()<.6) puff(player.x,.1,player.z,'#ffffff',.08,.3,.4); }
   else { const sp=onIce?4.8:4.3, k=Math.min(1,dt*(onIce?(ix||iz?2.4:.7):28)); player.vx+=(ix*sp-player.vx)*k; player.vz+=(iz*sp-player.vz)*k; }   // 빙판: 천천히 붙고 천천히 멈춰요
   player.x+=player.vx*dt; player.z+=player.vz*dt;
-  if(fb){ player.x+=fb[0]*FB_SPD*dt; player.z+=fb[1]*FB_SPD*dt; }   // 바닥 벨트가 밀어요
+  if(fb){ const v=FB_SPD*MAP_EXT.b; player.x+=fb[0]*v*dt; player.z+=fb[1]*v*dt; }   // 바닥 벨트가 밀어요
   collide(player);
   // 대시로는 한 칸 구멍을 건너뛸 수 있어요
   if(player.dashT<=0){ const t2=tileAt(player.x,player.z); if(!t2||t2.hole){ if(!t2){ player.x=Math.max(0,Math.min(MW-1,player.x)); player.z=Math.max(0,Math.min(MH-1,player.z)); } startFall(player); return; } }
@@ -1481,7 +1481,7 @@ function animOf(p){
 }
 function render(t,dt){
   syncVisuals(); syncThrown(dt); renderSwaps(t,dt);
-  WK.beltTex.offset.y-=dt*BELT_SPD*MAP_EXT.b*(state==='play'?1:.35); WK.floorBeltTex.offset.y-=dt*FB_SPD*(state==='play'?1:.35);
+  WK.beltTex.offset.y-=dt*BELT_SPD*MAP_EXT.b*(state==='play'?1:.35); WK.floorBeltTex.offset.y-=dt*FB_SPD*MAP_EXT.b*(state==='play'?1:.35);
   stations.forEach(s=>{ if(s.type==='belt'){ const b=state==='edit'?0:s.bt; s.holder.position.x=s.dir[0]*b; s.holder.position.z=s.dir[1]*b; } });
   // 캐릭터 모션
   players.forEach(p=>{
@@ -2376,8 +2376,8 @@ const ED={
       lab('빠르게 고르기'); const r3=row(); [[9,7,'작게'],[13,9,'보통'],[17,11,'크게'],[21,13,'아주 크게']].forEach(([w,h,n])=>btn(r3,n,d.w===w&&d.h===h,()=>this.resize(w-d.w,h-d.h)));
       note(`가로 ${MIN_W}~${MAX_W}칸, 세로 ${MIN_H}~${MAX_H}칸까지 돼요.`);
     } else if(this.propTab==='belt'){
-      note('팔레트에서 벨트를 골라 끌면 그 방향으로 놓여요. 놓인 벨트를 다시 누르거나 R키로 방향을 돌려요.');
-      lab('흐르는 속도'); const r1=row(); [[.6,'느림'],[1,'보통'],[1.6,'빠름']].forEach(([v,n])=>btn(r1,n,e.b===v,()=>{ e.b=v; this.setExt(e); }));
+      note('팔레트에서 벨트를 골라 끌면 그 방향으로 놓여요. 놓인 벨트를 다시 누르거나 R키로 방향을 돌려요. 속도는 기구 벨트와 바닥 벨트에 함께 적용돼요.');
+      lab('흐르는 속도'); const r1=row(); [[.6,'느림'],[1,'보통'],[1.6,'빠름'],[2.4,'아주 빠름'],[3.4,'번개']].forEach(([v,n])=>btn(r1,n,e.b===v,()=>{ e.b=v; this.setExt(e); }));
       lab('재료가 나오는 벨트');
       const r2=row(); e.f.forEach((f,i)=>{ const b=btn(r2,'',this.feedSel===i,()=>{ this.feedSel=this.feedSel===i?-1:i; this.swPick=null; this.renderProp(); },'ficon'); b.innerHTML=`<svg viewBox="0 0 24 24">${WK.ICON[f.k==='choco'?'chocobar':f.k]||''}</svg>${f.t}초`; });
       if(e.f.length<8) btn(r2,this.swPick==='f'?'벨트를 눌러요…':'+ 추가',this.swPick==='f',()=>{ this.swPick=this.swPick==='f'?null:'f'; this.renderPal(); this.renderProp(); });
