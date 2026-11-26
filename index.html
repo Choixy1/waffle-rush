@@ -1318,7 +1318,7 @@ window.WK.makeCustomer=makeCustomer; window.WK.makeEnvironment=makeEnvironment; 
 /* ---------------- 설정 ---------------- */
 const BLEND=6, TOTAL_CUPS=3, CHOCO_FAST=5;
 const GAME_TIME=300, MIX=10, COOK=17.5, WARN=20.5, BURN=24.5, CHOP=2.25, WASH=1.6, RETURN_DELAY=6, TOTAL_PLATES=4;
-const STAR_BASE=[150,260,375,490,600];
+const STAR_BASE=[125,215,310,410,500];
 // 같이 하면 별 기준을 조금 올려요 (2인 +5%, 3인 +12%, 4인 +20%)
 const starGoals=()=>{ const crew=NET.mode==='solo'?1:players.filter(p=>p.active).length; const k=[1,1,1.05,1.12,1.2][crew]||1; return STAR_BASE.map(g=>Math.round(g*k/5)*5); };
 const MAP=[
