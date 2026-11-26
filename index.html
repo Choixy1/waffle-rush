@@ -3397,7 +3397,11 @@ function importSave(raw){ raw=String(raw||'').trim(); if(raw.startsWith(SAVE_TAG
   ST.loaded(); toast(n?`저장을 불러왔어요 (맵 ${n}개)`:'저장을 불러왔어요'); return true; }
 $('saveCopyBtn').onclick=()=>{ const c=saveCode(); const fall=()=>{ const i=$('saveCodeIn'); i.value=c; i.focus(); i.select(); toast('아래 칸의 코드를 복사해 두세요'); };
   try{ navigator.clipboard.writeText(c).then(()=>toast('저장 코드를 복사했어요. 메모장 같은 곳에 붙여 두세요'),fall); }catch(e){ fall(); } };
-$('saveFileBtn').onclick=()=>{ try{ const b=new Blob([saveCode()],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); const d=new Date(); a.download=`waffle-rush-save-${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),4000); toast('저장 파일을 받았어요'); }catch(e){ $('saveCopyBtn').onclick(); } };
+let DL=null; try{ if(window.claude&&typeof window.claude.use==='function') window.claude.use('downloads').then(x=>{ DL=x; }).catch(()=>{}); }catch(e){}
+$('saveFileBtn').onclick=()=>{ const d=new Date(), fn=`waffle-rush-save-${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`;
+  if(window.claude){ if(!DL){ $('saveCopyBtn').onclick(); return; }   // Claude 링크: 파일 받기는 Claude 창이 확인한 뒤에 저장돼요
+    DL.save({filename:fn,data:saveCode()}).then(()=>toast('저장 파일을 받았어요'),e=>{ if(!e||e.code!=='declined') $('saveCopyBtn').onclick(); }); return; }
+  try{ const b=new Blob([saveCode()],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=fn; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),4000); toast('저장 파일을 받았어요'); }catch(e){ $('saveCopyBtn').onclick(); } };
 $('saveLoadBtn').onclick=()=>$('saveFile').click();
 $('saveFile').onchange=e=>{ const f=e.target.files&&e.target.files[0]; e.target.value=''; if(!f) return; if(f.size>1e6){ toast('파일이 너무 커요',true); return; } f.text().then(importSave,()=>toast('파일을 읽지 못했어요',true)); };
 $('saveCodeBtn').onclick=()=>{ if(importSave($('saveCodeIn').value)) $('saveCodeIn').value=''; };
